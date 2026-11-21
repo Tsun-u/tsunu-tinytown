@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<title>小小世界</title>
+<link rel="stylesheet" href="styles.css">
+<script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/" } }</script>
+</head>
+<body>
+<canvas id="stage"></canvas>
+
+<button id="weatherBtn" class="top-btn" type="button" aria-label="天氣"></button>
+<nav id="weatherMenu" class="top-menu" hidden aria-label="要什麼天氣"></nav>
+<button id="timeBtn" class="top-btn" type="button" aria-label="時間"></button>
+<nav id="timeMenu" class="top-menu" hidden aria-label="現在是什麼時候"></nav>
+<button id="mapBtn" class="top-btn" type="button" aria-label="地圖"></button>
+<nav id="mapMenu" hidden aria-label="要看哪裡"></nav>
+
+<button id="portraitBtn" type="button" aria-label="改造型">
+  <canvas id="portraitFace" width="144" height="144"></canvas>
+</button>
+
+<aside id="creator" hidden aria-label="改造型">
+  <div class="creator-top">
+    <div id="peopleRow" class="chip-row"></div>
+    <div class="creator-side">
+      <button id="creatorDone" class="round ok" type="button" aria-label="好了"></button>
+      <span id="saveBoxSlot"></span>
+    </div>
+  </div>
+  <div id="creatorOptions"></div>
+</aside>
+
+<script src="savebox.js"></script>
+<script type="module" src="src/main.js"></script>
+</body>
+</html>
