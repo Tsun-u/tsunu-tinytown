@@ -8,7 +8,10 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-PUBLIC = ('index.html', 'styles.css', 'savebox.js', 'src/', 'vendor/')
+PUBLIC = (
+    'index.html', 'styles.css', 'savebox.js', 'src/', 'vendor/',
+    'manifest.json', 'icon-192.png', 'icon-512.png', 'apple-touch-icon.png', 'favicon-32.png',
+)
 
 
 class GameFiles(SimpleHTTPRequestHandler):
