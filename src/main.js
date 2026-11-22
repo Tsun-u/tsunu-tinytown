@@ -88,12 +88,18 @@ function placeNamed(name) {
   }
   return places[name];
 }
-/** 把會動的座位（輪椅）擺到 spot：模型和提示圈跟著走。 */
+/** 把會動的座位（輪椅）擺到 spot：模型和提示圈跟著走。spot.away 是這台輪椅被推到別層去了，這一層就看不到它。 */
 function moveChair(chair, spot) {
-  chair.x = spot.x; chair.z = spot.z; chair.facing = spot.facing;
+  chair.x = spot.x; chair.z = spot.z; chair.facing = spot.facing; chair.away = Boolean(spot.away);
   chair.mesh.position.set(chair.x, 0, chair.z);
   chair.mesh.rotation.y = chair.facing;
+  chair.mesh.visible = !chair.away;
   chair.marker.position.x = chair.x; chair.marker.position.z = chair.z;
+}
+/** 擺好輪椅，並記進存檔。 */
+function parkAt(name, chair, spot) {
+  moveChair(chair, spot);
+  parked[`${name}:${places[name].chairs.indexOf(chair)}`] = { x: chair.x, z: chair.z, facing: chair.facing, away: chair.away };
 }
 /** 人現在坐的座位；沒坐著就是 null。 */
 const seatOf = (person) => (person.data.seat === null ? null : placeOf(person).chairs[person.data.seat]);
@@ -367,7 +373,7 @@ function walkable(x, z, place = world, except = null) {
     const distance = (cx - x) ** 2 + (cz - z) ** 2;
     if (!best || distance < best.distance) best = { x: cx, z: cz, distance };
   }
-  const wheelchairs = place.chairs.filter((c) => c.mobile && c !== except).map((c) => ({ x: c.x, z: c.z, r: 0.6 }));
+  const wheelchairs = place.chairs.filter((c) => c.mobile && !c.away && c !== except).map((c) => ({ x: c.x, z: c.z, r: 0.6 }));
   for (const o of [...place.obstacles, ...wheelchairs]) {
     const dx = best.x - o.x, dz = best.z - o.z;
     const d = Math.hypot(dx, dz);
@@ -453,13 +459,22 @@ function goTo(name) {
   touchShadow(1);
 }
 
-/** 人走過門口，到門通往的那個地方。 */
-function travel(person, door) {
+/** 那個地方有沒有替這台輪椅留的座位（同一棟的另一層才有）。 */
+const twinOf = (wheelchair, destination) => destination.chairs.find((c) => c.mobile && c.wheel === wheelchair.wheel);
+
+/** 人走過門口，到門通往的那個地方。wheelchair 是他坐著的輪椅：門的另一邊有它的位子（醫院的另一層），就連輪椅一起過去。 */
+function travel(person, door, wheelchair = null) {
   const from = placeName, destination = placeNamed(door.to);
   const spot = freeSpot(door.to, (destination.arrive && destination.arrive[from]) || destination.spawn);
+  const twin = wheelchair && twinOf(wheelchair, destination);
   person.data.place = door.to;
   if (destination.lift && world.lift) destination.lift.holdUntil = performance.now() / 1000 + 1.2;   // 搭電梯到的那一層，門開著讓人走出來
   Object.assign(person.data, { x: spot.x, z: spot.z, seat: null });
+  if (twin) {
+    parkAt(from, wheelchair, { x: wheelchair.x, z: wheelchair.z, facing: 0, away: true });
+    parkAt(door.to, twin, { x: spot.x, z: spot.z, facing: 0 });
+    person.data.seat = destination.chairs.indexOf(twin);
+  }
   settle(person);
   person.hop = 0.35;
   select(person);
@@ -551,7 +566,7 @@ function dropTarget(person, x, z) {
   let chair = null, chairDistance = 1.0;
   world.chairs.forEach((c) => {
     const d = Math.hypot(c.x - x, c.z - z);
-    if (!c.occupant && d < chairDistance) { chair = c; chairDistance = d; }
+    if (!c.occupant && !c.away && d < chairDistance) { chair = c; chairDistance = d; }
   });
   if (chair) return { chair };
   const door = world.doors.find((d) => Math.hypot(d.x - x, d.z - z) < (d.r ? d.r + 0.1 : 0.85));   // 圈比較小的門口（電梯、手扶梯），判定範圍跟著縮小
@@ -569,7 +584,7 @@ function dropTarget(person, x, z) {
 function showMarkers(target = {}) {
   const dragging = !!drag && drag.moved;
   world.chairs.forEach((c) => {
-    c.marker.visible = dragging && !c.occupant;
+    c.marker.visible = dragging && !c.occupant && !c.away;
     c.marker.scale.setScalar(c === target.chair ? 1.35 : 1);
     c.marker.material.color.set(c === target.chair ? 0xff8a3c : 0xffc94a);
   });
@@ -633,9 +648,9 @@ function standUp(person, chair) {
   save();
 }
 
-/** 推著輪椅放手：推到別的空位就換坐過去、推到門口人自己走過去（輪椅留在這一層），其他地方就停在那裡。 */
+/** 推著輪椅放手：推到別的空位就換坐過去；推到電梯就連輪椅一起到另一層；推到通往街上的門，人自己走出去、輪椅留下；其他地方就停在那裡。 */
 function parkChair(person, chair, chairOrigin, x, z) {
-  const key = `${placeName}:${world.chairs.indexOf(chair)}`;   // 先記下來：人走過門口後，畫面會換到別的地方
+  const name = placeName;   // 先記下來：人走過門口後，畫面會換到別的地方
   const target = dropTarget(person, x, z);
   if (target.chair) {
     // 輪椅停在新座位旁邊，往原本來的方向退開一點才不會疊在一起
@@ -648,14 +663,15 @@ function parkChair(person, chair, chairOrigin, x, z) {
     tryEat(person);
     tryWork(person);
   } else if (target.door) {
-    moveChair(chair, chairOrigin);
+    const rides = Boolean(twinOf(chair, placeNamed(target.door.to)));
+    if (!rides) moveChair(chair, chairOrigin);
     leaveSeat(person);
-    travel(person, target.door);
+    travel(person, target.door, rides ? chair : null);
   } else {
     moveChair(chair, { ...walkable(x, z, world, chair), facing: chair.facing });
     settle(person);
   }
-  parked[key] = { x: chair.x, z: chair.z, facing: chair.facing };
+  parkAt(name, chair, chair);
 }
 
 canvas.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });   // 中鍵不要變成瀏覽器的自動捲動

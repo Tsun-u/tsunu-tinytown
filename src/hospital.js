@@ -233,8 +233,9 @@ export function buildHospital(scene) {
   const waitingSeats = waiting(b);
   const clinicSeats = clinic(b);
   const scale = giraffe(b);
+  const wheels = [wheelSeat(0, { x: -1.0, z: 1.7 }), wheelSeat(1, null)];
 
-  const place = finishPlace(scene, b, [nurse, ...waitingSeats, ...clinicSeats, scale], {
+  const place = finishPlace(scene, b, [nurse, ...waitingSeats, ...clinicSeats, scale, ...wheels], {
     doors: [{ x: -2.9, z: 3.4, to: 'street' }, { x: LIFT_X, z: -2.1, to: 'hospital2', r: 0.62 }],
     spawn: { x: -1.0, z: 4.5 },
     arrive: { hospital2: { x: LIFT_X, z: -1.2 } },   // 搭電梯下來的人站在電梯前面
@@ -254,6 +255,7 @@ export function buildHospital(scene) {
   place.lift = liftDoors(place.group);
   const scaleChair = place.chairs.find((c) => c.pose === 'stand');
   scaleChair.bar = heightBar(place.group, scaleChair);
+  for (const chair of place.chairs) if (chair.mobile) chair.mesh = wheelchair(place.group);
   return place;
 }
 
@@ -337,10 +339,9 @@ export function buildHospital2(scene) {
   liftFrame(b, 2);
   const beds = ward(b);
   const sofa = lounge(b);
-  // 輪椅：mobile 的座位可以連人一起拖著走，停在哪裡由主程式記
-  const wheel = { x: 1.9, z: 1.2, facing: 0, seatHeight: SEAT_HEIGHT, mobile: true };
+  const wheels = [wheelSeat(1, { x: 1.9, z: 1.2 }), wheelSeat(0, null)];
 
-  const place = finishPlace(scene, b, [...beds, ...sofa, wheel], {
+  const place = finishPlace(scene, b, [...beds, ...sofa, ...wheels], {
     doors: [{ x: LIFT_X, z: -2.1, to: 'hospital', r: 0.62 }],
     spawn: { x: LIFT_X, z: -1.2 },
     view: { center: [0, 1.2, 0.8], height: 13.6, width: 16 },    // 小人放不上去的圓：玩具墊、沙發（輪椅會動，主程式另外算）
@@ -353,6 +354,12 @@ export function buildHospital2(scene) {
     ],
   });
   place.lift = liftDoors(place.group);
-  place.chairs.find((c) => c.mobile).mesh = wheelchair(place.group);
+  for (const chair of place.chairs) if (chair.mobile) chair.mesh = wheelchair(place.group);
   return place;
+}
+
+/** 輪椅的座位。醫院有兩台輪椅（wheel 0 一開始在一樓、wheel 1 在二樓），可以連人一起拖著走、搭電梯換樓層。
+ *  每一層替每一台都留一個座位：輪椅在別層時這個座位是 away（看不到、坐不了），停在哪裡由主程式記。 */
+function wheelSeat(wheel, spot) {
+  return { x: 0, z: 0, ...spot, facing: 0, seatHeight: SEAT_HEIGHT, mobile: true, wheel, away: !spot };
 }
