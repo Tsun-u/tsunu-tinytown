@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { buildShop } from './shop.js';
 import { buildHome } from './home.js';
-import { buildStreet, driveCars, laneStart, STREET_LAYOUT, movedStreetX } from './street.js';
+import { buildStreet, driveCars, laneStart, STREET_LAYOUT, migrateStreetSpot } from './street.js';
 import { buildPark1, buildPark2, buildPark3 } from './parking.js';
 import { buildToys } from './toys.js';
 import { buildPets } from './pets.js';
@@ -37,6 +37,8 @@ const DEFAULT_PEOPLE = [
 ];
 
 const saved = loadSave();
+// 街道的版面改過之後，街上的車原本開到哪裡就不算數了（車道不一樣），只留它在不在街上
+if ((saved.layout || 1) < STREET_LAYOUT) for (const [key, spot] of Object.entries(saved.parked || {})) if (key.startsWith('street:')) delete spot.s;
 const parked = { ...saved.parked };   // 輪椅和車子停在哪裡。屋裡的：「地方:第幾個座位」對到 { x, z, facing, away }；街上的車：「street:car幾」對到 { s, away }
 
 function save() {
@@ -147,7 +149,7 @@ const placeOf = (person) => placeNamed(person.data.place);
 const here = () => people.filter((p) => p.data.place === placeName);
 
 // 鏡頭繞著店左右轉。店只有後牆和左牆，轉太多會被牆擋住店內，所以限制在預設角度的左右各一段。
-const DEFAULT_YAW = Math.PI / 4, YAW_RANGE = 0.6;
+const DEFAULT_YAW = Math.PI / 4, YAW_RANGE = 0.75;   // 再多一點（超過 45 度）牆就會跑到鏡頭前面
 const CAMERA_DIR = new THREE.Vector3();
 let yaw = DEFAULT_YAW;
 function setYaw(value) {
@@ -1039,7 +1041,8 @@ function refocus() {
 
 // ---------- 開場 ----------
 if ((saved.layout || 1) < STREET_LAYOUT) {   // 街道多了兩棟：站在街上的人跟著他旁邊的房子一起移
-  for (const data of saved.people) if (data.place === 'street' && data.seat === null) data.x = movedStreetX(data.x);
+  for (const data of saved.people) if (data.place === 'street' && data.seat === null) Object.assign(data, migrateStreetSpot(saved.layout || 1, data.x, data.z));
+  for (const item of Object.values(saved.items || {})) if (item.place === 'street') Object.assign(item, migrateStreetSpot(saved.layout || 1, item.x, item.z));   // 放在街上地上的小東西也一起移
 }
 saved.people.filter((data) => !data.npc).forEach(addPerson);
 // 固定角色：存檔裡有就照存檔的位置，沒有（新加的角色、第一次玩）就站在表上的位置；制服一律照表

@@ -78,7 +78,7 @@ export class Sky {
     this.sun = sun;
     this.time = 'noon';
     this.weather = 'sun';
-    this.centerX = 0;          // 現在這個地方陰影的中心
+    this.center = { x: 0, z: 1 };   // 現在這個地方陰影的中心
     this.room = null;          // 現在這個地方的屋內範圍；整個都在戶外就是 null
     this.underground = false;  // 地下室：沒有雨雪
     this.rain = rainLines();
@@ -90,14 +90,14 @@ export class Sky {
     this.set({});
   }
 
-  /** 換地方：雨雪只下在屋外，晚上屋裡開燈；陰影的範圍對準這個地方（place.shadow 是中心的 x 和左右各要蓋多寬，街道比屋子寬很多）。 */
+  /** 換地方：雨雪只下在屋外，晚上屋裡開燈；陰影的範圍對準這個地方（place.shadow：中心的 x、z，左右各蓋多寬 half、前後各蓋多深 deep；街道比屋子大很多）。 */
   enter(place) {
     this.room = place.indoor;
     this.underground = Boolean(place.underground);
-    const { x, half } = place.shadow || { x: 0, half: 14 };
-    this.centerX = x;
-    this.sun.target.position.x = x;
-    Object.assign(this.sun.shadow.camera, { left: -half, right: half });
+    const { x = 0, z = 1, half = 14, deep = 11 } = place.shadow || {};
+    this.center = { x, z };
+    this.sun.target.position.set(x, 0, z);
+    Object.assign(this.sun.shadow.camera, { left: -half, right: half, top: deep, bottom: -deep });
     this.sun.shadow.camera.updateProjectionMatrix();
     this.set({});
   }
@@ -113,7 +113,8 @@ export class Sky {
     this.sun.color.set(t.sun);
     this.sun.intensity = t.power * w.dim;
     this.sun.position.fromArray(t.from);
-    this.sun.position.x += this.centerX;   // 太陽跟著陰影的中心平移，光的方向才不會變
+    this.sun.position.x += this.center.x;   // 太陽跟著陰影的中心平移，光的方向才不會變（from 是以 (0, 0, 1) 為中心寫的）
+    this.sun.position.z += this.center.z - 1;
     this.rain.visible = this.weather === 'rain' && !this.underground;
     this.snow.visible = this.weather === 'snow' && !this.underground;
     this.lamp.intensity = this.time === 'night' && this.room ? LAMP.power : 0;

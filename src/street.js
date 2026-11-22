@@ -8,31 +8,109 @@ import { C, SEAT_HEIGHT, pot, finishPlace } from './shop.js';
 
 const S = { towerA: '#a9c4de', towerB: '#c9b6e4', trim: '#f6efe4', roofRed: '#e8766a', roofBlue: '#7fb2e0', wallBlue: '#9cc6e6', face: '#f8d98a', block: '#f8d15c', cloud: '#ffffff', car: '#f7a8c4', deck: '#c9cdd6', deckDark: '#8f95a3', petWall: '#bfe6df', petRoof: '#f6a35a' };
 
-// 街道的版面改過一次：醫院和百貨中間多了停車塔（右邊的房子全部往右移 TOWER_GAP），玩具攤和幼稚園中間多了寵物店（幼稚園再往右移 PETS_GAP）。
-// 每一棟的函式還是用原本的座標寫，蓋的時候再整棟平移。
-const TOWER_GAP = 2.6, PETS_GAP = 2.9;
-const MID = TOWER_GAP, END = TOWER_GAP + PETS_GAP;   // 中間那一排（百貨到玩具攤）和街尾（幼稚園）各移了多少
-const LEFT = -8.1, RIGHT = 12.1 + END, CENTER = (LEFT + RIGHT) / 2, LENGTH = RIGHT - LEFT;
-export const STREET_LAYOUT = 2;
-/** 版面改之前存的街上位置，換算成現在的位置：人原本站在哪一棟門口，現在還是那一棟門口。 */
-export const movedStreetX = (x) => (x < -5.6 ? x : x < 8.3 ? x + MID : x + END);
+// 街道是 L 型：後面一排（牙醫、家、玩具攤、寵物店、幼稚園）沿著 x 排，正面朝前（+z）；
+// 左邊一排（由近到轉角：醫院、停車塔、百貨公司、點心店）沿著 z 排，正面朝右（+x）；轉角是小公園。
+// 每一棟的函式用的是「一整排往右排、正面朝前」的座標。後排整棟平移過去；左排整組轉 90 度：那套座標的 (x, z) 變成街上的 (z, ARM_Z - x)。
+const MID = 2.6;            // 左排裡，百貨和點心店比原本的座標往後移這麼多（中間多了停車塔）
+const ARM_Z = 3.6;
+const toArm = (x, z) => ({ x: z, z: ARM_Z - x });
+const BACK = 0.93, PETS_X = 10.48, KINDER = 3.58;   // 後排：牙醫、家、玩具攤平移多少，寵物店的中心，幼稚園平移多少
+const X_END = 16.0, Z_END = 11.9;                    // 後排和左排各到哪裡
+// 版面的編號：1 是一開始的一條直街，2 是加了停車塔和寵物店的直街，3 是 L 型
+export const STREET_LAYOUT = 3;
+/** 舊版面存的街上位置，換算成現在的位置：人原本站在哪一棟門口，現在還是那一棟門口。 */
+export function migrateStreetSpot(layout, x, z) {
+  if (layout < 2) x = x < -5.6 ? x : x < 8.3 ? x + 2.6 : x + 5.5;
+  if (layout < 3) {
+    if (x < 2.7) return toArm(x, z);                                   // 醫院到點心店：轉到左排
+    x += x < 10.75 ? BACK - 2.6 : x < 13.75 ? PETS_X - 12.2 : KINDER - 5.5;   // 牙醫到玩具攤、寵物店、幼稚園
+  }
+  return { x, z };
+}
 
 function ground(b) {
-  b.rbox(LENGTH + 1.2, 0.5, 9.6, C.baseDark, CENTER, -0.42, 0.9, { r: 0.18 });
-  b.rbox(LENGTH + 0.9, 0.26, 9.3, C.base, CENTER, -0.13, 0.9, { r: 0.1 });
-  for (let ix = 0; ix < Math.round(LENGTH); ix++) for (let iz = 0; iz < 2; iz++) b.box(0.97, 0.06, 0.97, (ix + iz) % 2 ? C.tileA : C.tileB, LEFT + 0.6 + ix, 0.03, 0.55 + iz);   // 人行道
-  b.rbox(LENGTH, 0.14, 0.24, C.cream, CENTER, 0.04, 2.18, { r: 0.05 });
-  b.box(LENGTH, 0.04, 2.2, C.road, CENTER, 0.01, 3.4);                             // 馬路
-  for (let x = LEFT + 1.1; x < RIGHT - 1; x += 2.0) b.box(0.9, 0.02, 0.1, C.white, x, 0.04, 3.4);
-  for (let i = 0; i < 6; i++) b.box(0.24, 0.02, 1.9, C.white, 2.5 + MID + i * 0.36, 0.04, 3.4);   // 斑馬線
-  b.rbox(LENGTH, 0.14, 0.24, C.cream, CENTER, 0.04, 4.62, { r: 0.05 });
-  b.box(LENGTH, 0.07, 0.7, C.leaf, CENTER, 0.02, 5.1);                             // 馬路對面的草地：只放矮的花，才不會擋到街上
-  for (let i = 0; i < Math.round(LENGTH / 1.12); i++) {
-    const x = LEFT + 0.7 + i * 1.12, z = 5.0 + (i % 2) * 0.22;
-    if (i % 3 === 0) { b.ball(0.2, C.greenDark, x, 0.14, z, { sy: 0.7 }); continue; }
+  // 底座：後排和左排各一條，疊成 L 型
+  for (const [w, d, cx, cz] of [[X_END + 4.2, 9.6, X_END / 2 - 1.65, 1.05], [9.6, Z_END + 4.2, 1.05, Z_END / 2 - 1.65]]) {
+    b.rbox(w, 0.5, d, C.baseDark, cx, -0.42, cz, { r: 0.18 });
+    b.rbox(w - 0.3, 0.26, d - 0.3, C.base, cx, -0.13, cz, { r: 0.1 });
+  }
+  // 人行道
+  for (let ix = 0; ix < Math.round(X_END) - 1; ix++) for (let iz = 0; iz < 2; iz++) b.box(0.97, 0.06, 0.97, (ix + iz) % 2 ? C.tileA : C.tileB, 1.5 + ix, 0.03, 0.55 + iz);
+  for (let iz = 0; iz < Math.round(Z_END) - 1; iz++) for (let ix = 0; ix < 2; ix++) {
+    if (iz === 0 && ix === 1) continue;   // 轉角那一格後排已經鋪了
+    b.box(0.97, 0.06, 0.97, (ix + iz) % 2 ? C.tileB : C.tileA, 0.55 + ix, 0.03, 1.5 + iz);
+  }
+  // 馬路：兩條在轉角相接
+  b.box(X_END - 2.3, 0.04, 2.2, C.road, (X_END + 2.3) / 2, 0.01, 3.4);
+  b.box(2.2, 0.04, Z_END - 2.3, C.road, 3.4, 0.01, (Z_END + 2.3) / 2);
+  b.rbox(X_END - 2.06, 0.14, 0.24, C.cream, (X_END + 2.06) / 2, 0.04, 2.18, { r: 0.05 });
+  b.rbox(0.24, 0.14, Z_END - 2.3, C.cream, 2.18, 0.04, (Z_END + 2.3) / 2, { r: 0.05 });
+  for (let x = 5.6; x < X_END - 1; x += 2.0) b.box(0.9, 0.02, 0.1, C.white, x, 0.04, 3.4);
+  for (let z = 5.6; z < Z_END - 1; z += 2.0) b.box(0.1, 0.02, 0.9, C.white, 3.4, 0.04, z);
+  for (let i = 0; i < 6; i++) b.box(0.24, 0.02, 1.9, C.white, 6.2 + i * 0.36, 0.04, 3.4);   // 斑馬線
+  // 馬路對面的草地：只放矮的花，才不會擋到街上
+  b.rbox(X_END - 4.5, 0.14, 0.24, C.cream, (X_END + 4.5) / 2, 0.04, 4.62, { r: 0.05 });
+  b.rbox(0.24, 0.14, Z_END - 4.74, C.cream, 4.62, 0.04, (Z_END + 4.74) / 2, { r: 0.05 });
+  b.box(X_END - 4.75, 0.07, 0.7, C.leaf, (X_END + 4.75) / 2, 0.02, 5.1);
+  b.box(0.7, 0.07, Z_END - 5.45, C.leaf, 5.1, 0.02, (Z_END + 5.45) / 2);
+  const flower = (x, z, i) => {
+    if (i % 3 === 0) { b.ball(0.2, C.greenDark, x, 0.14, z, { sy: 0.7 }); return; }
     b.box(0.02, 0.2, 0.02, C.greenDark, x, 0.15, z);
     b.ball(0.07, [C.pink, C.yellow, C.white, C.red, C.lilac][i % 5], x, 0.27, z);
+  };
+  for (let i = 0; i * 1.12 < X_END - 5.6; i++) flower(5.3 + i * 1.12, 5.0 + (i % 2) * 0.22, i);
+  for (let i = 0; i * 1.12 < Z_END - 6.6; i++) flower(5.0 + (i % 2) * 0.22, 6.3 + i * 1.12, i + 1);
+}
+
+const PARK = { fountain: [-0.9, -0.9], bench: [-2.55, 0.15] };
+
+/** 長椅：可以坐兩個人，面向 +z。 */
+function bench(b) {
+  b.rbox(1.8, 0.08, 0.5, C.wood, 0, SEAT_HEIGHT - 0.04, 0, { r: 0.03 });
+  for (const y of [0.66, 0.86]) b.rbox(1.8, 0.14, 0.06, C.wood, 0, y, -0.24, { r: 0.02 });
+  for (const sx of [-1, 1]) {
+    b.rbox(0.07, 0.95, 0.07, C.dark, sx * 0.82, 0.47, -0.24, { r: 0.02 });
+    b.rbox(0.07, SEAT_HEIGHT, 0.07, C.dark, sx * 0.82, SEAT_HEIGHT / 2, 0.2, { r: 0.02 });
+    b.rbox(0.07, 0.06, 0.5, C.dark, sx * 0.82, 0.64, 0, { r: 0.02 });
   }
+}
+
+/** 轉角的小公園：草地、噴水池、一張長椅、兩棵樹、花圃。回傳長椅的兩個位子。 */
+function park(b) {
+  b.box(4.2, 0.07, 4.2, C.leaf, -1.1, 0.02, -1.1);
+  const [fx, fz] = PARK.fountain;
+  b.cyl(1.5, 1.5, 0.03, C.tileB, fx, 0.075, fz, { seg: 28 });           // 噴水池周圍的鋪面
+  b.cyl(0.85, 0.9, 0.34, C.cream2, fx, 0.23, fz, { seg: 24 });
+  b.cyl(0.72, 0.72, 0.04, '#9fd8ee', fx, 0.4, fz, { seg: 24 });
+  b.cyl(0.1, 0.14, 0.7, C.cream2, fx, 0.6, fz, { seg: 10 });
+  b.cyl(0.34, 0.2, 0.1, C.cream2, fx, 0.97, fz, { seg: 14 });
+  b.cyl(0.28, 0.28, 0.03, '#9fd8ee', fx, 1.02, fz, { seg: 14 });
+  b.ball(0.1, '#e4f7fd', fx, 1.16, fz, { glow: true });
+  for (let i = 0; i < 5; i++) b.ball(0.05, '#e4f7fd', fx + Math.cos(i * 1.26) * 0.45, 0.47, fz + Math.sin(i * 1.26) * 0.45, { glow: true });
+  for (const [x, z] of [[0.2, 0.35], [0.55, -0.2], [-0.3, 0.6]]) b.cyl(0.26, 0.26, 0.03, C.cream, x, 0.075, z, { seg: 12 });   // 從人行道走進來的石板
+  // 長椅在左邊，面向右
+  const [bx, bz] = PARK.bench;
+  b.at(bx, 0, bz, Math.PI / 2, () => bench(b));
+  // 兩棵樹：高的在最裡面的角落
+  b.cyl(0.14, 0.2, 1.9, C.woodDark, -2.6, 0.95, -2.6, { seg: 10 });
+  b.ball(0.85, C.green, -2.6, 2.4, -2.6);
+  b.ball(0.6, C.leaf, -2.2, 2.95, -2.4);
+  b.ball(0.55, C.greenDark, -2.9, 2.9, -2.2);
+  b.cyl(0.1, 0.14, 1.1, C.woodDark, 0.4, 0.55, -2.6, { seg: 8 });
+  b.ball(0.55, C.leaf, 0.4, 1.45, -2.6);
+  b.ball(0.38, C.green, 0.65, 1.75, -2.45);
+  // 沿著後面兩邊的花圃
+  for (let i = 0; i < 7; i++) {
+    const hex = [C.pink, C.yellow, C.white, C.red, C.lilac][i % 5];
+    b.ball(0.16, C.greenDark, -1.9 + i * 0.36, 0.14, -2.95, { sy: 0.7 });
+    b.ball(0.07, hex, -1.9 + i * 0.36, 0.3, -2.9);
+    if (i < 5) { b.ball(0.16, C.greenDark, -2.95, 0.14, -1.7 + i * 0.36, { sy: 0.7 }); b.ball(0.07, hex, -2.9, 0.3, -1.7 + i * 0.36); }
+  }
+  // 路燈
+  b.cyl(0.12, 0.16, 0.2, C.dark, -2.6, 0.14, 0.95, { seg: 12 });
+  b.cyl(0.05, 0.06, 2.2, C.dark, -2.6, 1.25, 0.95, { seg: 10 });
+  b.ball(0.2, '#fff2a8', -2.6, 2.5, 0.95, { glow: true });
+  return [-0.4, 0.4].map((along) => ({ x: bx + 0.02, z: bz - along, facing: Math.PI / 2, seatHeight: SEAT_HEIGHT }));
 }
 
 /** 高樓：一格一格的窗戶。正面和右側都看得到，兩面都要有窗。 */
@@ -112,7 +190,7 @@ function deptTower(b) {
 
 /** 寵物店：湖水綠的牆、橘色屋頂，屋頂上一根大骨頭，櫥窗裡坐著一隻貓。這一棟直接用現在的座標寫。 */
 function petFront(b) {
-  const cx = 7.15 + MID + 2.45;
+  const cx = PETS_X;
   b.rbox(2.6, 2.3, 3.0, S.petWall, cx, 1.15, -1.5, { r: 0.05 });
   b.box(2.64, 0.6, 3.04, '#8fd0c8', cx, 0.31, -1.5);
   b.rbox(2.76, 0.26, 3.16, S.petRoof, cx, 2.42, -1.5, { r: 0.1 });
@@ -280,11 +358,18 @@ function dottedBlock(b, x, y, z) {
 }
 
 function sky(b) {
-  dottedBlock(b, 1.35 + MID, 3.5, -0.9);
-  dottedBlock(b, 7.15 + MID, 3.4, -0.7);
-  dottedBlock(b, -3.0 + MID, 4.4, -0.9);
-  b.ball(0.6, '#ffd75e', -1.4, 7.4, -3.3, { glow: true });   // 太陽
-  for (const [x, y, z] of [[0.4, 7.2, -3.2], [6.2, 6.4, -3.2], [12.6, 6.9, -3.2]]) {   // 雲
+  dottedBlock(b, 1.35 + BACK, 3.5, -0.9);    // 牙醫診所上面
+  dottedBlock(b, 7.15 + BACK, 3.4, -0.7);    // 玩具攤上面
+  dottedBlock(b, -0.9, 4.4, 4.0);            // 點心店上面
+  b.ball(0.6, '#ffd75e', 3.2, 7.6, -3.3, { glow: true });   // 太陽
+  for (const [x, y, z] of [[6.4, 6.6, -3.2], [11.8, 6.9, -3.2], [-3.2, 7.4, 2.6], [-3.2, 8.0, 8.4]]) {   // 雲
+    if (x < 0) {   // 左排後面的雲：沿著 z 排
+      b.ball(0.55, S.cloud, x, y, z, { glow: true });
+      b.ball(0.42, S.cloud, x, y - 0.1, z - 0.6, { glow: true });
+      b.ball(0.45, S.cloud, x, y - 0.08, z + 0.6, { glow: true });
+      b.ball(0.36, S.cloud, x, y + 0.3, z + 0.15, { glow: true });
+      continue;
+    }
     b.ball(0.55, S.cloud, x, y, z, { glow: true });
     b.ball(0.42, S.cloud, x - 0.6, y - 0.1, z, { glow: true });
     b.ball(0.45, S.cloud, x + 0.6, y - 0.08, z, { glow: true });
@@ -292,9 +377,10 @@ function sky(b) {
   }
 }
 
-const BENCH_X = 10.85 + END, LIGHT_X = -3.35 + MID, POT_X = 3.05 + MID, HYDRANT_X = 6.0 + MID;
+const BENCH_X = 10.85 + KINDER, LIGHT_X = -3.35 + MID, LAMP_X = -7.9, POT_X = 3.05 + BACK, HYDRANT_X = 6.0 + BACK;
 
-function furniture(b) {
+/** 左排人行道上的東西（用左排那套座標）：紅綠燈和路燈。 */
+function armFurniture(b) {
   // 紅綠燈：在高樓和店之間，照她畫的位置
   b.at(LIGHT_X, 0, 1.85, 0, () => {
     b.cyl(0.13, 0.16, 0.18, C.dark, 0, 0.13, 0, { seg: 12 });
@@ -302,23 +388,18 @@ function furniture(b) {
     b.rbox(0.36, 1.0, 0.3, C.dark, 0, 2.85, 0, { r: 0.08 });
     [['#ff6b5e', 3.15], ['#ffd45c', 2.85], ['#6fdc8c', 2.55]].forEach(([hex, y]) => b.ball(0.11, hex, 0, y, 0.13, { glow: true }));
   });
-  // 路燈：放最左邊
-  b.at(-7.9, 0, 1.85, 0, () => {
+  // 路燈：放最靠近鏡頭的那一頭
+  b.at(LAMP_X, 0, 1.85, 0, () => {
     b.cyl(0.14, 0.18, 0.2, C.dark, 0, 0.14, 0, { seg: 12 });
     b.cyl(0.05, 0.06, 2.5, C.dark, 0, 1.4, 0, { seg: 10 });
     b.ball(0.22, '#fff2a8', 0, 2.88, 0, { glow: true });
     b.cyl(0.05, 0.2, 0.1, C.dark, 0, 3.12, 0, { seg: 12 });
   });
-  // 長椅：在幼稚園右邊的窗戶前面，可以坐兩個人
-  b.at(BENCH_X, 0, 0.5, 0, () => {
-    b.rbox(1.8, 0.08, 0.5, C.wood, 0, SEAT_HEIGHT - 0.04, 0, { r: 0.03 });
-    for (const y of [0.66, 0.86]) b.rbox(1.8, 0.14, 0.06, C.wood, 0, y, -0.24, { r: 0.02 });
-    for (const sx of [-1, 1]) {
-      b.rbox(0.07, 0.95, 0.07, C.dark, sx * 0.82, 0.47, -0.24, { r: 0.02 });
-      b.rbox(0.07, SEAT_HEIGHT, 0.07, C.dark, sx * 0.82, SEAT_HEIGHT / 2, 0.2, { r: 0.02 });
-      b.rbox(0.07, 0.06, 0.5, C.dark, sx * 0.82, 0.64, 0, { r: 0.02 });
-    }
-  });
+}
+
+/** 後排人行道上的東西：幼稚園前的長椅、盆栽、消防栓。 */
+function backFurniture(b) {
+  b.at(BENCH_X, 0, 0.5, 0, () => bench(b));   // 長椅：在幼稚園右邊的窗戶前面，可以坐兩個人
   pot(b, POT_X, 0.42, C.pink);
   // 消防栓
   b.cyl(0.11, 0.13, 0.42, C.red, HYDRANT_X, 0.27, 1.85, { seg: 10 });
@@ -326,26 +407,58 @@ function furniture(b) {
   b.cyl(0.05, 0.05, 0.36, C.red, HYDRANT_X, 0.32, 1.85, { seg: 8, rz: Math.PI / 2 });
 }
 
-// 小車沿著馬路繞圈：靠鏡頭的車道往右開，街尾迴轉，靠人行道的車道往左開回來
-const LANE = { x0: LEFT + 1.6, x1: RIGHT - 1.6, near: 3.9, far: 2.9 };
-const TURN = (LANE.near - LANE.far) / 2, STRAIGHT = LANE.x1 - LANE.x0, LAP = 2 * STRAIGHT + 2 * Math.PI * TURN;
+// 小車沿著 L 型的馬路繞圈：外側的車道從左排開到轉角、轉進後排往右開，街尾迴轉，內側的車道開回來，在左排那一頭再迴轉。
+// 車道是一圈折線，每個轉折處修成圓角，取樣成一串點；LANE_AT 是開到每一點時的里程。
+const LANE_POINTS = (() => {
+  const corners = [[3.9, Z_END - 1.2], [3.9, 3.9], [X_END - 1.4, 3.9], [X_END - 1.4, 2.9], [2.9, 2.9], [2.9, Z_END - 1.2]];
+  const points = [];
+  corners.forEach((corner, i) => {
+    const toward = (other) => {   // 從轉折處往相鄰的點退一小段，當圓角的起點和終點
+      const dx = other[0] - corner[0], dz = other[1] - corner[1], length = Math.hypot(dx, dz), cut = Math.min(0.5, length / 2);
+      return [corner[0] + dx / length * cut, corner[1] + dz / length * cut];
+    };
+    const from = toward(corners[(i + corners.length - 1) % corners.length]), to = toward(corners[(i + 1) % corners.length]);
+    for (let k = 0; k <= 6; k++) {
+      const t = k / 6, u = 1 - t;
+      points.push([u * u * from[0] + 2 * u * t * corner[0] + t * t * to[0], u * u * from[1] + 2 * u * t * corner[1] + t * t * to[1]]);
+    }
+  });
+  return points;
+})();
+const LANE_AT = [0];
+LANE_POINTS.forEach((point, i) => {
+  const next = LANE_POINTS[(i + 1) % LANE_POINTS.length];
+  LANE_AT.push(LANE_AT[i] + Math.hypot(next[0] - point[0], next[1] - point[1]));
+});
+const LAP = LANE_AT[LANE_POINTS.length];
+/** 車道上離 (x, z) 最近的那一點的里程。 */
+function laneNear(x, z) {
+  let best = { distance: Infinity, s: 0 };
+  LANE_POINTS.forEach((a, i) => {   // 每一小段上離 (x, z) 最近的地方
+    const c = LANE_POINTS[(i + 1) % LANE_POINTS.length], dx = c[0] - a[0], dz = c[1] - a[1], span = dx * dx + dz * dz;
+    const t = span > 0 ? Math.min(1, Math.max(0, ((x - a[0]) * dx + (z - a[1]) * dz) / span)) : 0;
+    const distance = Math.hypot(a[0] + dx * t - x, a[1] + dz * t - z);
+    if (distance < best.distance) best = { distance, s: LANE_AT[i] + Math.sqrt(span) * t };
+  });
+  return best.s;
+}
 const CAR_SPEED = 2.2;
 export const CAR_SEAT_HEIGHT = 0.68;
 // 四台車：粉紅色那台一開始在街上，其他三台停在停車塔的一、二、三樓。每台車有前座和後座（離車子中心多遠）。
 export const CAR_COLORS = [S.car, '#7db4ec', '#f8d15c', '#8fd6a0'];
 export const CAR_SEATS = [0.2, -0.45];
-const TOWER_DOOR_X = -4.0;   // 停車塔的車道口
+const TOWER_DOOR = toArm(-4.0, 0.75);   // 停車塔的車道口
 /** 從停車塔開出來的車，從車道口前面的車道開始開。 */
-export const laneStart = () => TOWER_DOOR_X - LANE.x0;
+export const laneStart = () => laneNear(2.9, TOWER_DOOR.z);
 
 /** 車子開了 s 這麼遠時在哪裡。 */
 function lanePoint(s) {
-  const d = ((s % LAP) + LAP) % LAP, mid = (LANE.near + LANE.far) / 2;
-  if (d < STRAIGHT) return [LANE.x0 + d, LANE.near];
-  if (d < STRAIGHT + Math.PI * TURN) { const a = Math.PI / 2 - (d - STRAIGHT) / TURN; return [LANE.x1 + Math.cos(a) * TURN, mid + Math.sin(a) * TURN]; }
-  if (d < 2 * STRAIGHT + Math.PI * TURN) return [LANE.x1 - (d - STRAIGHT - Math.PI * TURN), LANE.far];
-  const a = -Math.PI / 2 - (d - 2 * STRAIGHT - Math.PI * TURN) / TURN;
-  return [LANE.x0 + Math.cos(a) * TURN, mid + Math.sin(a) * TURN];
+  const d = ((s % LAP) + LAP) % LAP;
+  let i = 0;
+  while (LANE_AT[i + 1] <= d) i++;
+  const a = LANE_POINTS[i], c = LANE_POINTS[(i + 1) % LANE_POINTS.length], span = LANE_AT[i + 1] - LANE_AT[i];
+  const t = span > 0 ? (d - LANE_AT[i]) / span : 0;
+  return [a[0] + (c[0] - a[0]) * t, a[1] + (c[1] - a[1]) * t];
 }
 
 /** 敞篷小車：獨立的網格，有人坐上去就會開。車頭朝 +x。 */
@@ -399,47 +512,67 @@ export function driveCars(place, dt) {
 export function buildStreet(scene) {
   const b = new Builder();
   ground(b);
-  // 平移過的那幾棟：蓋的時候整棟移過去，門口的位置跟著移
+  // 後排：蓋的時候整棟平移過去，門口的位置跟著移
   const moved = (dx, front) => { let door; b.at(dx, 0, 0, 0, () => { door = front(b); }); return { ...door, x: door.x + dx }; };
-  const hospitalDoor = hospitalTower(b);
-  const parkDoor = parkingTower(b);
-  const deptDoor = moved(MID, deptTower);
-  const shopDoor = moved(MID, shopFront);
-  const dentistDoor = moved(MID, faceHouse);
-  const homeDoor = moved(MID, homeFront);
-  const toysDoor = moved(MID, toyStall);
+  // 左排：整棟轉 90 度、正面朝右，門口的位置跟著轉
+  const turned = (dx, front) => {
+    let door;
+    b.at(0, 0, ARM_Z, Math.PI / 2, () => b.at(dx, 0, 0, 0, () => { door = front(b); }));
+    return { ...door, ...toArm(door.x + dx, door.z) };
+  };
+  const hospitalDoor = turned(0, hospitalTower);
+  const parkDoor = turned(0, parkingTower);
+  const deptDoor = turned(MID, deptTower);
+  const shopDoor = turned(MID, shopFront);
+  b.at(0, 0, ARM_Z, Math.PI / 2, () => armFurniture(b));
+  const dentistDoor = moved(BACK, faceHouse);
+  const homeDoor = moved(BACK, homeFront);
+  const toysDoor = moved(BACK, toyStall);
   const petsDoor = petFront(b);
-  const kinderDoor = moved(END, kinderFront);
+  const kinderDoor = moved(KINDER, kinderFront);
+  backFurniture(b);
+  const parkSeats = park(b);
   sky(b);
-  furniture(b);
-  // 長椅的兩個位子，加上每一台車的前座和後座（位置每一格跟著車子更新）。粉紅色那台排最前面，舊存檔記的座位編號才對得上
+  // 幼稚園前長椅的兩個位子、每一台車的前座和後座（位置每一格跟著車子更新）、公園長椅的兩個位子。
+  // 順序不能動：存檔記的是第幾個座位，新的只能加在最後面
   const seats = [
     { x: BENCH_X - 0.4, z: 0.52, facing: 0, seatHeight: SEAT_HEIGHT }, { x: BENCH_X + 0.4, z: 0.52, facing: 0, seatHeight: SEAT_HEIGHT },
     ...CAR_COLORS.flatMap((hex, car) => CAR_SEATS.map((along) => ({ x: 0, z: 0, facing: 0, seatHeight: CAR_SEAT_HEIGHT, pose: 'drive', along, car }))),
+    ...parkSeats,
   ];
+  const leftDoors = [hospitalDoor, parkDoor, deptDoor, shopDoor], backDoors = [dentistDoor, homeDoor, toysDoor, petsDoor, kinderDoor];
+  const light = toArm(LIGHT_X, 1.85), lamp = toArm(LAMP_X, 1.85), shopPot = toArm(-0.35 + MID, 0.42);
 
   const place = finishPlace(scene, b, seats, {
-    doors: [hospitalDoor, parkDoor, deptDoor, shopDoor, dentistDoor, homeDoor, toysDoor, petsDoor, kinderDoor],
-    spawn: { x: shopDoor.x, z: 1.6 },
-    // 從屋裡出來的人站在那一棟的門外
-    arrive: { hospital: { x: hospitalDoor.x, z: 1.6 }, park1: { x: parkDoor.x, z: 1.7 }, dept1: { x: deptDoor.x, z: 1.6 }, shop: { x: shopDoor.x, z: 1.6 }, home: { x: homeDoor.x, z: 1.6 }, toys: { x: toysDoor.x - 0.3, z: 1.7 }, pets: { x: petsDoor.x, z: 1.6 }, kinder: { x: kinderDoor.x, z: 1.6 }, dentist: { x: dentistDoor.x, z: 1.6 } },
-    view: { center: [CENTER, 2.4, 0.9], height: 17.5, width: LENGTH + 9.3 },
-    shadow: { x: CENTER, half: LENGTH / 2 + 3.9 },   // 陰影要蓋得住整條街
+    doors: [...leftDoors, ...backDoors],
+    spawn: { x: 1.6, z: shopDoor.z },
+    // 從屋裡出來的人站在那一棟的門外：左排的門外是門的右邊，後排的門外是門的前面
+    arrive: {
+      ...Object.fromEntries(leftDoors.map((door) => [door.to, { x: 1.65, z: door.z }])),
+      ...Object.fromEntries(backDoors.map((door) => [door.to, { x: door.x, z: 1.65 }])),
+    },
+    view: { center: [4.7, 1.5, 2.6], height: 18.5, width: 27.5 },
+    shadow: { x: 5, z: 3.5, half: 18, deep: 16 },   // 陰影要蓋得住兩排
     indoor: null,
-    // 小人放不上去的圓：紅綠燈、路燈、長椅、盆栽、消防栓、信箱（小車會開走，不算）
+    // 小人放不上去的圓：紅綠燈、路燈、兩張長椅、盆栽、消防栓、信箱、噴水池、公園的樹（小車會開走，不算）
     obstacles: [
-      { x: LIGHT_X, z: 1.85, r: 0.45 }, { x: -7.9, z: 1.85, r: 0.45 },
+      { ...light, r: 0.45 }, { ...lamp, r: 0.45 }, { ...shopPot, r: 0.5 },
       { x: BENCH_X - 0.4, z: 0.5, r: 0.5 }, { x: BENCH_X + 0.4, z: 0.5, r: 0.5 },
-      { x: -0.35 + MID, z: 0.42, r: 0.5 }, { x: POT_X, z: 0.42, r: 0.5 }, { x: HYDRANT_X, z: 1.85, r: 0.4 },
-      { x: 5.75 + MID, z: 0.5, r: 0.4 },
+      { x: POT_X, z: 0.42, r: 0.5 }, { x: HYDRANT_X, z: 1.85, r: 0.4 }, { x: 5.75 + BACK, z: 0.5, r: 0.4 },
+      { x: PARK.fountain[0], z: PARK.fountain[1], r: 1.05 }, { x: -2.6, z: -2.6, r: 0.5 }, { x: 0.4, z: -2.6, r: 0.4 },
+      ...parkSeats.map((seat) => ({ x: seat.x, z: seat.z, r: 0.5 })), { x: -2.6, z: 0.95, r: 0.35 },
     ],
-    // 小人能站的範圍：人行道和馬路
-    areas: [{ minX: LEFT + 0.5, maxX: RIGHT - 0.7, minZ: 0.95, maxZ: 4.3 }],
+    // 小人能站的範圍：後排和左排的人行道與馬路、轉角的公園
+    areas: [
+      { minX: 1.0, maxX: X_END - 0.6, minZ: 0.95, maxZ: 4.3 },
+      { minX: 0.95, maxX: 4.3, minZ: 1.0, maxZ: Z_END - 0.5 },
+      { minX: -2.8, maxX: 1.0, minZ: -2.8, maxZ: 1.0 },
+    ],
   });
-  // 街上的車：s 是沿著車道開了多遠。粉紅色那台一開始停在左邊路旁、車頭朝左；其他三台在停車塔裡
+  // 街上的車：s 是沿著車道開了多遠。粉紅色那台一開始停在醫院前面的路旁；其他三台在停車塔裡
   place.vehicles = CAR_COLORS.map((hex, id) => ({
     kind: 'car', id, street: true, mesh: carModel(place.group, hex), seats: place.chairs.filter((chair) => chair.car === id),
-    s: 2 * STRAIGHT + Math.PI * TURN - 0.9, away: id > 0,
+    s: laneNear(2.9, hospitalDoor.z), away: id > 0,
   }));
   driveCars(place, 0);
   return place;
