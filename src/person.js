@@ -1,7 +1,9 @@
 // 積木小人：用幾何形狀拼出來的 3D 人物。原點在腳底，正面朝 +z。
 import * as THREE from 'three';
-import { HAT_COLOR, PACK_COLOR, CROWN_COLOR } from './design.js';
+import { HAT_COLOR, PACK_COLOR, CROWN_COLOR, dogLook } from './design.js';
 
+const DOG_LEG = 0.26;      // 狗狗的腿長，也是站著時肚子離地的高度
+const DOG_HEIGHT = 0.95;
 const HIP = 0.45;          // 髖關節高度（大人、站著）
 const SHOULDER = 0.88;
 const HEAD_Y = 1.22;
@@ -49,13 +51,82 @@ export class Person {
     this.rebuild();
   }
 
+  get isDog() { return this.data.design.size === 'dog'; }
   get scale() { return this.data.design.size === 'child' ? CHILD_SCALE : 1; }
-  get height() { return 1.55 * this.scale; }
+  get height() { return this.isDog ? DOG_HEIGHT : 1.55 * this.scale; }
+
+  /** 冰棒：棒子在原點、冰的那頭朝 -y。人握在右手，狗狗叼在嘴裡。 */
+  buildPopsicle() {
+    this.popsicle = new THREE.Group();
+    this.popsicle.scale.setScalar(1.35);
+    part(this.popsicle, geo('popStick', () => new THREE.BoxGeometry(0.025, 0.12, 0.02)), '#e8c99a', 0, 0, 0);
+    ['#ff9fb8', '#ffd86b', '#8fdcc0'].forEach((color, i) => {   // 三色條紋，穿什麼顏色的衣服都看得出來
+      part(this.popsicle, geo('popIce', () => new THREE.BoxGeometry(0.1, 0.06, 0.05)), color, 0, -0.08 - i * 0.06, 0);
+    });
+    this.popsicle.visible = false;
+    return this.popsicle;
+  }
+
+  /** 狗狗：四隻腳站著，原點在腳底、正面朝 +z。torso 以肚子底為準，趴下時整個往下放、四隻腳往前伸。 */
+  buildDog(d) {
+    const look = dogLook(d);
+    this.torso = new THREE.Group();
+    this.torso.position.y = DOG_LEG;
+    this.body.add(this.torso);
+    part(this.torso, geo('dogBody', () => new THREE.SphereGeometry(0.2, 16, 12)), look.fur, 0, 0.18, 0).scale.set(1, 0.92, 1.75);
+    if (look.patch === 'back') part(this.torso, geo('dogBack', () => new THREE.SphereGeometry(0.14, 12, 9)), look.mark, 0, 0.3, -0.06).scale.set(1.15, 0.5, 1.5);
+    // 四隻腳：前兩隻、後兩隻
+    this.paws = [[-1, 0.22], [1, 0.22], [-1, -0.22], [1, -0.22]].map(([side, z]) => {
+      const joint = new THREE.Group();
+      joint.position.set(side * 0.11, 0.04, z);
+      part(joint, geo('dogLeg', () => new THREE.CylinderGeometry(0.058, 0.052, DOG_LEG, 8)), look.fur, 0, -DOG_LEG / 2 - 0.02, 0);
+      part(joint, geo('dogPaw', () => new THREE.SphereGeometry(0.07, 8, 6)), look.snout, 0, -DOG_LEG + 0.01, 0.025).scale.y = 0.7;
+      this.torso.add(joint);
+      return joint;
+    });
+    this.tail = new THREE.Group();
+    this.tail.position.set(0, 0.28, -0.33);
+    this.tail.rotation.x = -0.7;
+    part(this.tail, geo('dogTail', () => new THREE.CylinderGeometry(0.028, 0.045, 0.28, 8)), look.fur, 0, 0.14, 0);
+    this.torso.add(this.tail);
+    // 項圈和名牌
+    const collar = part(this.torso, geo('dogCollar', () => new THREE.TorusGeometry(0.16, 0.032, 6, 16)), look.collar, 0, 0.3, 0.24);
+    collar.rotation.x = Math.PI / 2 - 0.75;
+    part(this.torso, geo('dogTag', () => new THREE.SphereGeometry(0.04, 8, 6)), CROWN_COLOR, 0, 0.17, 0.36);
+
+    this.head = new THREE.Group();
+    this.head.position.set(0, 0.46, 0.33);
+    this.torso.add(this.head);
+    part(this.head, geo('dogHead', () => new THREE.SphereGeometry(0.23, 18, 14)), look.fur);
+    part(this.head, geo('dogSnout', () => new THREE.SphereGeometry(0.12, 12, 9)), look.snout, 0, -0.07, 0.19).scale.set(1.05, 0.8, 1.1);
+    part(this.head, geo('dogNose', () => new THREE.SphereGeometry(0.045, 8, 6)), '#4a3b33', 0, -0.03, 0.315);
+    part(this.head, geo('dogTongue', () => new THREE.BoxGeometry(0.05, 0.02, 0.07)), '#f28ba0', 0, -0.135, 0.26);
+    for (const side of [-1, 1]) part(this.head, geo('eye', () => new THREE.SphereGeometry(0.036, 8, 6)), '#4a3b33', side * 0.095, 0.05, 0.2);
+    if (look.patch === 'eye') part(this.head, geo('dogEyePatch', () => new THREE.SphereGeometry(0.09, 10, 8)), look.mark, 0.095, 0.05, 0.165).scale.z = 0.5;
+    for (const side of [-1, 1]) {
+      if (look.ears === 'floppy') {
+        part(this.head, geo('dogEarFlop', () => new THREE.SphereGeometry(0.11, 10, 8)), look.mark, side * 0.215, -0.03, -0.01).scale.set(0.5, 1.35, 0.9);
+      } else {
+        part(this.head, geo('dogEarUp', () => new THREE.ConeGeometry(0.085, 0.2, 8)), look.mark, side * 0.13, 0.25, -0.02).rotation.z = -side * 0.25;
+      }
+    }
+    // 嘴巴：叼東西的位置。冰的那頭轉成朝前
+    this.mouth = new THREE.Group();
+    this.mouth.position.set(0, -0.12, 0.3);
+    this.mouth.add(this.buildPopsicle());
+    this.popsicle.rotation.x = -Math.PI / 2;
+    this.head.add(this.mouth);
+  }
 
   rebuild() {
     const d = this.data.design;
     this.body.clear();
     this.body.scale.setScalar(this.scale);
+    if (this.isDog) {
+      this.buildDog(d);
+      if (this.castShadow) this.body.traverse((node) => { if (node.isMesh) node.castShadow = true; });
+      return;
+    }
 
     this.legs = [-1, 1].map((side) => {
       const hip = new THREE.Group();
@@ -84,15 +155,8 @@ export class Person {
       return shoulder;
     });
     // 冰棒握在右手，棒子朝下、冰的那頭朝手臂外
-    this.popsicle = new THREE.Group();
+    this.arms[1].add(this.buildPopsicle());
     this.popsicle.position.set(0, -0.42, 0.06);
-    this.popsicle.scale.setScalar(1.35);
-    part(this.popsicle, geo('popStick', () => new THREE.BoxGeometry(0.025, 0.12, 0.02)), '#e8c99a', 0, 0, 0);
-    ['#ff9fb8', '#ffd86b', '#8fdcc0'].forEach((color, i) => {   // 三色條紋，穿什麼顏色的衣服都看得出來
-      part(this.popsicle, geo('popIce', () => new THREE.BoxGeometry(0.1, 0.06, 0.05)), color, 0, -0.08 - i * 0.06, 0);
-    });
-    this.popsicle.visible = false;
-    this.arms[1].add(this.popsicle);
 
     this.head = new THREE.Group();
     this.head.position.y = HEAD_Y;
@@ -185,10 +249,49 @@ export class Person {
   /** 手指要點哪個高度才算點到這個人。 */
   get pickHeight() { return this.mode === 'sleep' ? this.seatHeight + 0.2 : this.body.position.y + this.height * 0.55; }
 
+  /** 狗狗每一格的姿勢：站著、趴著（坐椅子、騎東西、睡覺都是趴）、被抓起來。 */
+  updateDog(t) {
+    const lying = ['sit', 'ride', 'sleep', 'splash'].includes(this.mode);
+    const busy = this.greet > 0 || this.working > 0 || this.eating > 0 || this.treat > 0 || this.mode === 'held';
+    let lift = 0, squash = 1 + Math.sin(t * 2.2) * 0.015;
+    let swing = [0, 0, 0, 0];
+    if (lying) {
+      lift = this.seatHeight - DOG_LEG;                      // 肚子貼在座位上
+      swing = [-1.45, -1.45, -1.45, -1.45];                  // 四隻腳往前伸
+      if (this.mode === 'sleep') squash = 1 + Math.sin(t * 1.4) * 0.03;
+      if (this.mode === 'splash') {
+        lift += Math.abs(Math.sin(t * 5)) * 0.05;
+        swing[0] += Math.sin(t * 9) * 0.6; swing[1] -= Math.sin(t * 9) * 0.6;   // 前腳輪流拍水
+      }
+    } else if (this.mode === 'held') {
+      lift = 0.5;
+      swing = [Math.sin(t * 9) * 0.5, -Math.sin(t * 9) * 0.5, -Math.sin(t * 9) * 0.5, Math.sin(t * 9) * 0.5];
+    }
+    if (this.greet > 0 && this.mode === 'stand') lift += Math.abs(Math.sin(this.greet * 7)) * 0.2;
+    if (this.hop > 0 && this.mode !== 'held') lift += Math.sin((this.hop / 0.35) * Math.PI) * 0.18;
+
+    this.body.rotation.x = 0;
+    this.body.position.set(0, lift, 0);
+    this.body.scale.set(1, squash, 1);
+    this.paws.forEach((paw, i) => { paw.rotation.x = swing[i]; });
+    this.tail.rotation.z = Math.sin(t * (busy ? 15 : 5)) * (busy ? 0.7 : 0.4);
+    const munch = Math.max(this.eating, this.treat);
+    const nod = munch > 0 ? Math.sin(((munch % 0.8) / 0.8) * Math.PI) : (this.working > 0 ? 0.5 + Math.sin(t * 9) * 0.3 : 0);
+    this.head.rotation.x = (this.mode === 'sleep' ? 0.45 : 0) + 0.3 * nod;   // 睡覺時頭垂下來；吃東西、做事時點頭
+    this.head.rotation.z = busy ? 0 : Math.sin(t * 0.9) * 0.08;
+    this.popsicle.visible = this.treat > 0;
+    this.shadow.scale.setScalar(this.mode === 'held' ? 0.55 : 0.8);
+    this.shadow.visible = !this.castShadow && (this.mode === 'stand' || this.mode === 'work');
+  }
+
   update(dt, time) {
     this.greet = Math.max(0, this.greet - dt);
     this.hop = Math.max(0, this.hop - dt);
+    this.eating = Math.max(0, this.eating - dt);
+    this.working = this.mode === 'work' ? Math.max(0, this.working - dt) : 0;
+    this.treat = this.mode === 'held' ? 0 : Math.max(0, this.treat - dt);
     const t = time + this.phase;
+    if (this.isDog) { this.updateDog(t); return; }
     let lift = 0, legSwing = [0, 0], armLift = [0, 0], squash = 1 + Math.sin(t * 2.2) * 0.012;
 
     if (this.mode === 'sit') {
@@ -222,9 +325,6 @@ export class Person {
     this.body.position.y = lift;
     this.body.scale.set(this.scale, this.scale * squash, this.scale);
     this.legs.forEach((leg, i) => { leg.rotation.x = legSwing[i]; });
-    this.eating = Math.max(0, this.eating - dt);
-    this.working = this.mode === 'work' ? Math.max(0, this.working - dt) : 0;
-    this.treat = this.mode === 'held' ? 0 : Math.max(0, this.treat - dt);
     this.popsicle.visible = this.treat > 0;
     const stir = this.working > 0 ? 0.55 + Math.sin(t * 9) * 0.12 : 0;   // 做事：右手伸向前攪、刷、拿
     const munch = Math.max(this.eating, this.treat);

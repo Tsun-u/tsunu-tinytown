@@ -1,5 +1,5 @@
 // 造型面板：選要改哪個人、加人、刪人，以及每一排造型選項。全部用圖示和色塊。
-import { SKINS, HAIR_COLORS, CLOTH_COLORS, HAIRS, BOTTOMS, EXTRAS, SIZES, MAX_PEOPLE, drawAvatar } from './design.js';
+import { SKINS, HAIR_COLORS, CLOTH_COLORS, HAIRS, BOTTOMS, EXTRAS, SIZES, FUR_COLORS, EARS, PATCHES, DOG_DEFAULTS, MAX_PEOPLE, drawAvatar } from './design.js';
 
 const ICONS = {
   check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3.2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>',
@@ -8,8 +8,9 @@ const ICONS = {
 };
 
 // 每一排選項：改 design 的哪個欄位、有哪些值、圖示怎麼畫（adultIcon：圖示固定用大人尺寸畫，小孩的全身圖太小看不清楚）
-const ROWS = [
-  { field: 'size', values: SIZES, label: '大人或小孩', icon: 'full' },
+// 第一排選大人、小孩或狗狗；人和狗狗各有自己的幾排。換成狗狗時人的造型欄位都留著，換回來還是原本的樣子。
+const SIZE_ROW = { field: 'size', values: SIZES, label: '大人、小孩或狗狗', icon: 'full' };
+const PERSON_ROWS = [
   { field: 'skin', values: SKINS, label: '膚色', swatch: true },
   { field: 'hair', values: HAIRS, label: '髮型', icon: 'head' },
   { field: 'hairColor', values: HAIR_COLORS, label: '髮色', swatch: true },
@@ -17,6 +18,12 @@ const ROWS = [
   { field: 'bottom', values: BOTTOMS, label: '褲子或裙子', icon: 'full', adultIcon: true },
   { field: 'bottomColor', values: CLOTH_COLORS, label: '褲裙顏色', swatch: true },
   { field: 'extra', values: EXTRAS, label: '配件', icon: 'full', adultIcon: true },
+];
+const DOG_ROWS = [
+  { field: 'fur', values: FUR_COLORS, label: '毛色', swatch: true },
+  { field: 'ears', values: EARS, label: '耳朵', icon: 'head' },
+  { field: 'patch', values: PATCHES, label: '斑塊', icon: 'full' },
+  { field: 'top', values: CLOTH_COLORS, label: '項圈顏色', swatch: true },
 ];
 
 function iconCanvas(design, mode) {
@@ -98,7 +105,7 @@ export class Creator {
     const design = person.data.design;
     const scroll = this.options.scrollTop;
     this.options.replaceChildren();
-    for (const row of ROWS) {
+    for (const row of [SIZE_ROW, ...(design.size === 'dog' ? DOG_ROWS : PERSON_ROWS)]) {
       const line = document.createElement('div');
       line.className = 'chip-row';
       line.setAttribute('role', 'group');
@@ -108,7 +115,7 @@ export class Creator {
         button.type = 'button';
         button.dataset.field = row.field;
         button.dataset.value = value;
-        const on = design[row.field] === value;
+        const on = (design[row.field] ?? DOG_DEFAULTS[row.field]) === value;
         if (row.swatch) {
           button.className = 'swatch' + (on ? ' on' : '');
           button.style.background = value;
