@@ -304,22 +304,29 @@ function lounge(b) {
   return sofa;
 }
 
-/** 輪椅：可以坐一個人。 */
-function wheelchair(b, x, z) {
-  b.at(x, 0, z, 0, () => {
-    b.rbox(0.52, 0.08, 0.5, C.blue, 0, SEAT_HEIGHT - 0.04, 0, { r: 0.03 });
-    b.rbox(0.52, 0.5, 0.07, C.blue, 0, SEAT_HEIGHT + 0.32, -0.24, { r: 0.03 });
-    for (const sx of [-1, 1]) {
-      b.cyl(0.3, 0.3, 0.05, C.dark, sx * 0.31, 0.32, -0.08, { seg: 16, rz: Math.PI / 2 });
-      b.cyl(0.2, 0.2, 0.06, M.steel, sx * 0.31, 0.32, -0.08, { seg: 12, rz: Math.PI / 2 });
-      b.cyl(0.09, 0.09, 0.05, C.dark, sx * 0.24, 0.11, 0.3, { seg: 10, rz: Math.PI / 2 });
-      b.box(0.04, 0.3, 0.04, M.steelDark, sx * 0.24, 0.27, 0.26);
-      b.box(0.04, 0.04, 0.5, M.steelDark, sx * 0.27, SEAT_HEIGHT + 0.2, -0.02);        // 扶手
-      b.box(0.04, 0.04, 0.2, M.steelDark, sx * 0.24, SEAT_HEIGHT + 0.56, -0.34);       // 推把
-    }
-    b.box(0.44, 0.03, 0.14, M.steelDark, 0, 0.1, 0.36);                                 // 腳踏板
-  });
-  return { x, z, facing: 0, seatHeight: SEAT_HEIGHT };
+/** 輪椅的模型。輪椅會被推著走，所以是獨立的網格，位置由主程式照座位的 x、z、facing 擺。 */
+function wheelchair(group) {
+  const chair = new THREE.Group();
+  const part = (geometry, color, x, y, z) => {
+    const mesh = new THREE.Mesh(geometry, new THREE.MeshLambertMaterial({ color }));
+    mesh.position.set(x, y, z);
+    mesh.castShadow = true;
+    chair.add(mesh);
+  };
+  const wheel = (radius, width, seg) => new THREE.CylinderGeometry(radius, radius, width, seg).rotateZ(Math.PI / 2);
+  part(new THREE.BoxGeometry(0.52, 0.08, 0.5), C.blue, 0, SEAT_HEIGHT - 0.04, 0);
+  part(new THREE.BoxGeometry(0.52, 0.5, 0.07), C.blue, 0, SEAT_HEIGHT + 0.32, -0.24);
+  for (const sx of [-1, 1]) {
+    part(wheel(0.3, 0.05, 16), C.dark, sx * 0.31, 0.32, -0.08);
+    part(wheel(0.2, 0.06, 12), M.steel, sx * 0.31, 0.32, -0.08);
+    part(wheel(0.09, 0.05, 10), C.dark, sx * 0.24, 0.11, 0.3);
+    part(new THREE.BoxGeometry(0.04, 0.3, 0.04), M.steelDark, sx * 0.24, 0.27, 0.26);
+    part(new THREE.BoxGeometry(0.04, 0.04, 0.5), M.steelDark, sx * 0.27, SEAT_HEIGHT + 0.2, -0.02);     // 扶手
+    part(new THREE.BoxGeometry(0.04, 0.04, 0.2), M.steelDark, sx * 0.24, SEAT_HEIGHT + 0.56, -0.34);    // 推把
+  }
+  part(new THREE.BoxGeometry(0.44, 0.03, 0.14), M.steelDark, 0, 0.1, 0.36);                              // 腳踏板
+  group.add(chair);
+  return chair;
 }
 
 export function buildHospital2(scene) {
@@ -330,13 +337,14 @@ export function buildHospital2(scene) {
   liftFrame(b, 2);
   const beds = ward(b);
   const sofa = lounge(b);
-  const wheel = wheelchair(b, 1.9, 1.2);
+  // 輪椅：mobile 的座位可以連人一起拖著走，停在哪裡由主程式記
+  const wheel = { x: 1.9, z: 1.2, facing: 0, seatHeight: SEAT_HEIGHT, mobile: true };
 
   const place = finishPlace(scene, b, [...beds, ...sofa, wheel], {
     doors: [{ x: LIFT_X, z: -2.1, to: 'hospital', r: 0.62 }],
     spawn: { x: LIFT_X, z: -1.2 },
-    view: { center: [0, 1.2, 0.8], height: 13.6, width: 16 },    // 小人放不上去的圓：玩具墊、輪椅、沙發
-    obstacles: [{ x: -0.7, z: 1.5, r: 0.85 }, { x: 1.9, z: 1.2, r: 0.55 }, { x: -3.4, z: 0.15, r: 0.5 }, { x: -3.4, z: 1.05, r: 0.5 }],
+    view: { center: [0, 1.2, 0.8], height: 13.6, width: 16 },    // 小人放不上去的圓：玩具墊、沙發（輪椅會動，主程式另外算）
+    obstacles: [{ x: -0.7, z: 1.5, r: 0.85 }, { x: -3.4, z: 0.15, r: 0.5 }, { x: -3.4, z: 1.05, r: 0.5 }],
     // 小人能站的範圍：病房、電梯前面、陽台
     areas: [
       { minX: -2.7, maxX: 3.5, minZ: -0.7, maxZ: 2.6 },
@@ -345,5 +353,6 @@ export function buildHospital2(scene) {
     ],
   });
   place.lift = liftDoors(place.group);
+  place.chairs.find((c) => c.mobile).mesh = wheelchair(place.group);
   return place;
 }
