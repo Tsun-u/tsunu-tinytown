@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { buildShop } from './shop.js';
 import { buildHome } from './home.js';
-import { buildStreet, driveCar, STREET_LAYOUT, movedStreetX } from './street.js';
+import { buildStreet, driveCars, laneStart, STREET_LAYOUT, movedStreetX } from './street.js';
+import { buildPark1, buildPark2, buildPark3 } from './parking.js';
 import { buildToys } from './toys.js';
 import { buildPets } from './pets.js';
 import { buildHospital, buildHospital2, setLiftOpen } from './hospital.js';
@@ -34,7 +35,8 @@ const DEFAULT_PEOPLE = [
     { id: 2, place: 'street', x: -1.4, z: 2.1, seat: null, design: { skin: '#ffe0c4', hair: 'pigtails', hairColor: '#6b4226', top: '#f29bc0', bottom: 'skirt', bottomColor: '#e2574c', extra: 'none', size: 'child' } },
 ];
 
-const parked = {};   // 被推走的輪椅停在哪裡：「地方:第幾個座位」對到 { x, z, facing }
+const saved = loadSave();
+const parked = { ...saved.parked };   // 輪椅和車子停在哪裡。屋裡的：「地方:第幾個座位」對到 { x, z, facing, away }；街上的車：「street:car幾」對到 { s, away }
 
 function save() {
   touchShadow(2);   // 存檔代表有人動過或換過造型
@@ -72,6 +74,7 @@ const sky = new Sky(scene, hemi, sun);
 // 百貨公司四層（dept0 是地下室）用手扶梯，一次走一層。
 const builders = {
   street: buildStreet, hospital: buildHospital, hospital2: buildHospital2,
+  park1: buildPark1, park2: buildPark2, park3: buildPark3,
   dept0: buildDept0, dept1: buildDept1, dept2: buildDept2, dept3: buildDept3,
   shop: buildShop, dentist: buildDentist, home: buildHome, toys: buildToys, pets: buildPets, kinder: buildKinder,
 };
@@ -83,25 +86,52 @@ function placeNamed(name) {
   if (!places[name]) {
     places[name] = builders[name](scene);
     places[name].group.visible = false;
-    places[name].chairs.forEach((chair, index) => {
-      if (chair.mobile) moveChair(chair, parked[`${name}:${index}`] || chair);
-    });
+    gatherVehicles(name, places[name]);
     for (const person of people) if (person.data.place === name) settle(person);   // 地方蓋好了，原本就在這裡的人各就各位
   }
   return places[name];
 }
-/** 把會動的座位（輪椅）擺到 spot：模型和提示圈跟著走。spot.away 是這台輪椅被推到別層去了，這一層就看不到它。 */
-function moveChair(chair, spot) {
-  chair.x = spot.x; chair.z = spot.z; chair.facing = spot.facing; chair.away = Boolean(spot.away);
-  chair.mesh.position.set(chair.x, 0, chair.z);
-  chair.mesh.rotation.y = chair.facing;
-  chair.mesh.visible = !chair.away;
-  chair.marker.position.x = chair.x; chair.marker.position.z = chair.z;
+
+// 載具：可以連人一起移動的東西，輪椅（一個位子）和車子（前後兩個位子）。
+// 屋裡的載具用拖的：拖坐在上面的人，整台跟著走。街上的車自己沿著車道開（見 street.js 的 driveCars）。
+// 同一台載具在它去得了的每個地方都留了位子，不在那裡時是 away（看不到、坐不了）；過門口時這邊收起來、那邊擺出來。
+/** 把一個地方 mobile 的座位照「哪一台」收成載具，擺到存檔記的位置。街道的車 street.js 已經收好了，這裡只還原存檔。 */
+function gatherVehicles(name, place) {
+  if (place.vehicles) {
+    for (const car of place.vehicles) {
+      car.key = `${name}:car${car.id}`;
+      Object.assign(car, parked[car.key]);
+      for (const seat of car.seats) seat.vehicle = car;
+    }
+    return;
+  }
+  const byTag = new Map();
+  place.chairs.forEach((chair, index) => {
+    if (!chair.mobile) return;
+    const kind = chair.car === undefined ? 'wheel' : 'car', id = kind === 'car' ? chair.car : chair.wheel;
+    if (!byTag.has(kind + id)) byTag.set(kind + id, { kind, id, seats: [], mesh: chair.mesh, key: `${name}:${index}`, radius: kind === 'car' ? 1.0 : 0.6 });
+    chair.vehicle = byTag.get(kind + id);
+    chair.vehicle.seats.push(chair);
+  });
+  place.vehicles = [...byTag.values()];
+  for (const vehicle of place.vehicles) moveVehicle(vehicle, parked[vehicle.key] || vehicle.seats[0].spot || vehicle.seats[0]);
 }
-/** 擺好輪椅，並記進存檔。 */
-function parkAt(name, chair, spot) {
-  moveChair(chair, spot);
-  parked[`${name}:${places[name].chairs.indexOf(chair)}`] = { x: chair.x, z: chair.z, facing: chair.facing, away: chair.away };
+/** 把屋裡的載具擺到 spot（x、z、facing、away）：模型、每個位子的位置和提示圈、坐在上面的人都跟著走。 */
+function moveVehicle(vehicle, spot) {
+  Object.assign(vehicle, { x: spot.x, z: spot.z, facing: spot.facing, away: Boolean(spot.away) });
+  vehicle.mesh.position.set(vehicle.x, 0, vehicle.z);
+  vehicle.mesh.rotation.y = vehicle.facing;
+  vehicle.mesh.visible = !vehicle.away;
+  for (const seat of vehicle.seats) {
+    const along = seat.along || 0;   // 位子在載具中心的前面或後面多遠
+    Object.assign(seat, { x: vehicle.x + along * Math.sin(vehicle.facing), z: vehicle.z + along * Math.cos(vehicle.facing), facing: vehicle.facing, away: vehicle.away });
+    seat.marker.position.x = seat.x; seat.marker.position.z = seat.z;
+    if (seat.occupant && seat.occupant.mode === 'sit') seat.occupant.place(seat.x, seat.z, seat.facing);
+  }
+}
+/** 把載具現在停的位置記進存檔。 */
+function remember(vehicle) {
+  parked[vehicle.key] = vehicle.street ? { s: vehicle.s, away: vehicle.away } : { x: vehicle.x, z: vehicle.z, facing: vehicle.facing, away: vehicle.away };
 }
 /** 人現在坐的座位；沒坐著就是 null。 */
 const seatOf = (person) => (person.data.seat === null ? null : placeOf(person).chairs[person.data.seat]);
@@ -239,9 +269,9 @@ function updateEffects(dt, time) {
     if (Math.abs(goal - lift.open) > 0.002) { setLiftOpen(lift, lift.open + (goal - lift.open) * (1 - Math.exp(-dt * 10))); touchShadow(); }
   }
   if (world.escalators) moveEscalators(world, time);
-  if (world.car) {   // 小車：有人坐著就開，坐在車上的人跟著車走
-    if (driveCar(world, dt)) touchShadow();
-    for (const seat of world.carSeats) {
+  if (placeName === 'street') {   // 街上的車：有人坐著就開，坐在車上的人跟著車走
+    if (driveCars(world, dt)) touchShadow();
+    for (const seat of world.vehicles.flatMap((car) => car.seats)) {
       const rider = seat.occupant;
       if (rider && rider.mode === 'sit') { rider.root.position.set(seat.x, 0, seat.z); rider.root.rotation.y = seat.facing; }
     }
@@ -367,7 +397,7 @@ function select(person) {
   refocus();
 }
 
-/** 把點推到小人能站的地方：先夾進可站的範圍，再推出桌子這類障礙。輪椅也是障礙；except 是不算在內的那一台（正在推的）。 */
+/** 把點推到小人能站的地方：先夾進可站的範圍，再推出桌子這類障礙。屋裡的輪椅和車子也是障礙；except 是不算在內的那一台（正在推的）。 */
 function walkable(x, z, place = world, except = null) {
   let best = null;
   for (const area of place.areas) {
@@ -376,8 +406,8 @@ function walkable(x, z, place = world, except = null) {
     const distance = (cx - x) ** 2 + (cz - z) ** 2;
     if (!best || distance < best.distance) best = { x: cx, z: cz, distance };
   }
-  const wheelchairs = place.chairs.filter((c) => c.mobile && !c.away && c !== except).map((c) => ({ x: c.x, z: c.z, r: 0.6 }));
-  for (const o of [...place.obstacles, ...wheelchairs]) {
+  const vehicles = place.vehicles.filter((v) => !v.street && !v.away && v !== except).map((v) => ({ x: v.x, z: v.z, r: v.radius }));
+  for (const o of [...place.obstacles, ...vehicles]) {
     const dx = best.x - o.x, dz = best.z - o.z;
     const d = Math.hypot(dx, dz);
     if (d < o.r) {
@@ -410,7 +440,9 @@ const PLACE_ICONS = {
 };
 /** 大樓某一層的圖示：大樓的圖加上樓層數字。 */
 const floorIcon = (inner, floor) => `<svg viewBox="0 0 48 48">${inner}<circle cx="37" cy="37" r="10" fill="#fff" stroke="#f29a85" stroke-width="2.5"/><text x="37" y="42" text-anchor="middle" font-size="15" font-weight="800" font-family="sans-serif" fill="#4a3b33">${floor}</text></svg>`;
-const HOSPITAL_ICON = '<path d="M9 8h26v36H9z" fill="#a9c4de"/><path d="M7 5h30v5H7z" fill="#f6efe4"/><path d="M13 14h18v18H13z" fill="#fff"/><path d="M19.5 16h5v14h-5z" fill="#e86a5c"/><path d="M15 20.5h14v5H15z" fill="#e86a5c"/><path d="M18 35h8v9h-8z" fill="#5a5560"/>';
+const PARK_ICON = '<path d="M7 9h30v35H7z" fill="#d5d8de"/><path d="M7 19h30v3H7zM7 31h30v3H7z" fill="#a3a8b3"/><rect x="12" y="23" width="14" height="6" rx="2" fill="#7db4ec"/><rect x="17" y="35" width="14" height="6" rx="2" fill="#f7a8c4"/><rect x="10" y="3" width="13" height="13" rx="3" fill="#5b8def"/><path d="M14 13V6h4a2.500 2.500 0 0 1 0 5h-4" fill="none" stroke="#fff" stroke-width="2.200"/>';
+[1, 2, 3].forEach((floor) => { PLACE_ICONS['park' + floor] = floorIcon(PARK_ICON, floor); });
+const HOSPITAL_ICON ='<path d="M9 8h26v36H9z" fill="#a9c4de"/><path d="M7 5h30v5H7z" fill="#f6efe4"/><path d="M13 14h18v18H13z" fill="#fff"/><path d="M19.5 16h5v14h-5z" fill="#e86a5c"/><path d="M15 20.5h14v5H15z" fill="#e86a5c"/><path d="M18 35h8v9h-8z" fill="#5a5560"/>';
 PLACE_ICONS.hospital = floorIcon(HOSPITAL_ICON, 1);
 PLACE_ICONS.hospital2 = floorIcon(HOSPITAL_ICON, 2);
 const DEPT_ICON = '<path d="M8 8h28v36H8z" fill="#c9b6e4"/><path d="M6 5h32v5H6z" fill="#f6efe4"/><path d="M14 20h16v15H14z" fill="#f7a8c4"/><path d="M18 20v-3a4 4 0 0 1 8 0v3" fill="none" stroke="#fff" stroke-width="2.5"/><path d="M12 12h6v5h-6zM26 12h6v5h-6z" fill="#c9ecf5"/>';
@@ -418,7 +450,7 @@ const DEPT_ICON = '<path d="M8 8h28v36H8z" fill="#c9b6e4"/><path d="M6 5h32v5H6z
 PLACE_ICONS.kinder = '<svg viewBox="0 0 48 48"><path d="M8 22h32v20H8z" fill="#fff6e8"/><path d="M5 22 24 8l19 14z" fill="#f8d15c"/><path d="M8 34h32v8H8z" fill="#b9e3a8"/><path d="M20 30h8v12h-8z" fill="#f5a25a"/><circle cx="24" cy="17" r="3" fill="#e86a5c"/><path d="M11 26h6v6h-6zM31 26h6v6h-6z" fill="#c9ecf5"/></svg>';
 PLACE_ICONS.dentist = '<svg viewBox="0 0 48 48"><path d="M8 14h32v28H8z" fill="#f8d98a"/><path d="M5 9h38v7H5z" fill="#e8766a"/><path d="M17 20c-4 0-6 3-5 8 1 6 2 12 5 12 2 0 2-6 7-6s5 6 7 6c3 0 4-6 5-12 1-5-1-8-5-8-3 0-4 1.500-7 1.500S20 20 17 20z" fill="#fff"/></svg>';
 PLACE_ICONS.pets = '<svg viewBox="0 0 48 48"><path d="M8 16h32v26H8z" fill="#bfe6df"/><path d="M5 11h38v7H5z" fill="#f6a35a"/><ellipse cx="24" cy="33" rx="7" ry="6" fill="#a86b3c"/><circle cx="14.500" cy="27" r="3.200" fill="#a86b3c"/><circle cx="20.500" cy="22.500" r="3.200" fill="#a86b3c"/><circle cx="27.500" cy="22.500" r="3.200" fill="#a86b3c"/><circle cx="33.500" cy="27" r="3.200" fill="#a86b3c"/></svg>';
-const PLACE_LABELS = { pets: '寵物店', kinder: '幼稚園', dentist: '牙醫診所', street: '街上', hospital: '醫院一樓', hospital2: '醫院二樓', dept0: '百貨地下室超市', dept1: '百貨一樓服飾店', dept2: '百貨二樓遊戲區和書店', dept3: '百貨三樓美食街', shop: '點心店', home: '家', toys: '玩具店' };
+const PLACE_LABELS = { park1: '停車塔一樓', park2: '停車塔二樓', park3: '停車塔三樓（露天）', pets: '寵物店', kinder: '幼稚園', dentist: '牙醫診所', street: '街上', hospital: '醫院一樓', hospital2: '醫院二樓', dept0: '百貨地下室超市', dept1: '百貨一樓服飾店', dept2: '百貨二樓遊戲區和書店', dept3: '百貨三樓美食街', shop: '點心店', home: '家', toys: '玩具店' };
 const mapButton = document.getElementById('mapBtn');
 const mapMenu = document.getElementById('mapMenu');
 
@@ -463,23 +495,37 @@ function goTo(name) {
   touchShadow(1);
 }
 
-/** 那個地方有沒有替這台輪椅留的座位（同一棟的另一層才有）。 */
-const twinOf = (wheelchair, destination) => destination.chairs.find((c) => c.mobile && c.wheel === wheelchair.wheel);
+/** 那個地方有沒有替這台載具留的位子：輪椅是醫院的另一層，車子是街上和停車塔的每一層。 */
+const twinOf = (vehicle, destination) => destination.vehicles.find((v) => v.kind === vehicle.kind && v.id === vehicle.id);
 
-/** 人走過門口，到門通往的那個地方。wheelchair 是他坐著的輪椅：門的另一邊有它的位子（醫院的另一層），就連輪椅一起過去。 */
-function travel(person, door, wheelchair = null) {
+/** 人走過門口，到門通往的那個地方。vehicle 是他坐著的載具、seatIndex 是他坐第幾個位子：
+ *  門的另一邊有這台載具的位子，就整台連同車上其他人一起過去。 */
+function travel(person, door, vehicle = null, seatIndex = 0) {
   const from = placeName, destination = placeNamed(door.to);
   const spot = freeSpot(door.to, (destination.arrive && destination.arrive[from]) || destination.spawn);
-  const twin = wheelchair && twinOf(wheelchair, destination);
-  person.data.place = door.to;
+  const twin = vehicle && twinOf(vehicle, destination);
   if (destination.lift && world.lift) destination.lift.holdUntil = performance.now() / 1000 + 1.2;   // 搭電梯到的那一層，門開著讓人走出來
-  Object.assign(person.data, { x: spot.x, z: spot.z, seat: null });
   if (twin) {
-    parkAt(from, wheelchair, { x: wheelchair.x, z: wheelchair.z, facing: 0, away: true });
-    parkAt(door.to, twin, { x: spot.x, z: spot.z, facing: 0 });
-    person.data.seat = destination.chairs.indexOf(twin);
+    const riders = vehicle.seats.map((seat) => seat.occupant);
+    riders[seatIndex] = person;
+    for (const seat of vehicle.seats) seat.occupant = null;
+    // 這邊收起來
+    if (vehicle.street) vehicle.away = true;
+    else moveVehicle(vehicle, { x: vehicle.x, z: vehicle.z, facing: vehicle.facing, away: true });
+    // 那邊擺出來：街上的車從停車塔的車道口開始開，屋裡的停在門口附近
+    if (twin.street) { Object.assign(twin, { away: false, s: laneStart() }); driveCars(destination, 0); }
+    else moveVehicle(twin, { x: spot.x, z: spot.z, facing: 0 });
+    remember(vehicle);
+    remember(twin);
+    riders.forEach((rider, i) => {
+      if (!rider) return;
+      Object.assign(rider.data, { place: door.to, x: spot.x, z: spot.z, seat: destination.chairs.indexOf(twin.seats[i]) });
+      settle(rider);
+    });
+  } else {
+    Object.assign(person.data, { place: door.to, x: spot.x, z: spot.z, seat: null });
+    settle(person);
   }
-  settle(person);
   person.hop = 0.35;
   select(person);
 }
@@ -566,17 +612,19 @@ function personAt(clientX, clientY) {
 }
 
 /** 放手的位置會碰到什麼：空位、門口、另一個人，或地板。 */
-function dropTarget(person, x, z) {
+function dropTarget(person, x, z, riding = null) {
   let chair = null, chairDistance = 1.0;
   world.chairs.forEach((c) => {
+    if (riding && c.vehicle === riding) return;   // 正在推的那一台自己的位子不算
     // 座位比較高時，圈圈畫在座位上；手指對準圈圈放手，地板上的落點會偏向鏡頭反方向，所以兩個位置都算
     const slide = c.marker.position.y / CAMERA_DIR.y;
     const d = Math.min(Math.hypot(c.x - x, c.z - z), Math.hypot(c.x - CAMERA_DIR.x * slide - x, c.z - CAMERA_DIR.z * slide - z));
     if (!c.occupant && !c.away && d < chairDistance) { chair = c; chairDistance = d; }
   });
-  if (chair) return { chair };
   const door = world.doors.find((d) => Math.hypot(d.x - x, d.z - z) < (d.r ? d.r + 0.1 : 0.85));   // 圈比較小的門口（電梯、手扶梯），判定範圍跟著縮小
-  if (door) return { door };
+  // 門口旁邊剛好有空位時（例如停在坡道口的車），看放手的地方離哪一個近
+  if (door && (!chair || Math.hypot(door.x - x, door.z - z) < chairDistance)) return { door };
+  if (chair) return { chair };
   let friend = null, friendDistance = 0.95;
   for (const other of here()) {
     if (other === person) continue;
@@ -590,7 +638,7 @@ function dropTarget(person, x, z) {
 function showMarkers(target = {}) {
   const dragging = !!drag && drag.moved;
   world.chairs.forEach((c) => {
-    c.marker.visible = dragging && !c.occupant && !c.away;
+    c.marker.visible = dragging && !c.occupant && !c.away && !(drag.chair && c.vehicle === drag.chair.vehicle);
     c.marker.scale.setScalar(c === target.chair ? 1.35 : 1);
     c.marker.material.color.set(c === target.chair ? 0xff8a3c : 0xffc94a);
   });
@@ -639,45 +687,48 @@ function cancelDrag() {
   drag = null;
   showMarkers();
   if (!moved) return;
-  if (chair) moveChair(chair, chairOrigin);
+  if (chair) moveVehicle(chair.vehicle, chairOrigin);
   Object.assign(person.data, origin);
   settle(person);
 }
 
-/** 坐輪椅的人點一下就站起來，站在輪椅旁邊。 */
+/** 坐在輪椅或屋裡的車上的人，點一下就下來，站在旁邊。 */
 function standUp(person, chair) {
+  const vehicle = chair.vehicle;
   leaveSeat(person);
-  const spot = walkable(chair.x + 0.75, chair.z + 0.25);
+  const spot = walkable(vehicle.x + vehicle.radius + 0.15, vehicle.z + 0.25);
   Object.assign(person.data, { x: spot.x, z: spot.z });
   settle(person);
   person.hop = 0.35;
   save();
 }
 
-/** 推著輪椅放手：推到別的空位就換坐過去；推到電梯就連輪椅一起到另一層；推到通往街上的門，人自己走出去、輪椅留下；其他地方就停在那裡。 */
-function parkChair(person, chair, chairOrigin, x, z) {
-  const name = placeName;   // 先記下來：人走過門口後，畫面會換到別的地方
-  const target = dropTarget(person, x, z);
+/** 推著載具放手：推到別的空位，人就換坐過去；推到門口，門的另一邊有它的位子就整台過去，沒有的話人自己走過去、載具留在原地；其他地方就停在那裡。 */
+function parkVehicle(person, chair, origin, x, z) {
+  const vehicle = chair.vehicle;
+  const target = dropTarget(person, x, z, vehicle);
   if (target.chair) {
-    // 輪椅停在新座位旁邊，往原本來的方向退開一點才不會疊在一起
-    const away = Math.atan2(chairOrigin.x - target.chair.x, chairOrigin.z - target.chair.z);
-    const spot = walkable(target.chair.x + Math.sin(away) * 0.9, target.chair.z + Math.cos(away) * 0.9, world, chair);
-    moveChair(chair, { ...spot, facing: chair.facing });
+    // 停在新座位旁邊，往原本來的方向退開一點才不會疊在一起
+    const away = Math.atan2(origin.x - target.chair.x, origin.z - target.chair.z), gap = vehicle.radius + 0.3;
+    const spot = walkable(target.chair.x + Math.sin(away) * gap, target.chair.z + Math.cos(away) * gap, world, vehicle);
     leaveSeat(person);
+    moveVehicle(vehicle, { ...spot, facing: vehicle.facing });
     person.data.seat = world.chairs.indexOf(target.chair);
     settle(person);
     tryEat(person);
     tryWork(person);
   } else if (target.door) {
-    const rides = Boolean(twinOf(chair, placeNamed(target.door.to)));
-    if (!rides) moveChair(chair, chairOrigin);
+    if (twinOf(vehicle, placeNamed(target.door.to))) {
+      travel(person, target.door, vehicle, vehicle.seats.indexOf(chair));
+      return;   // travel 已經把兩邊的位置記好了
+    }
+    moveVehicle(vehicle, origin);
     leaveSeat(person);
-    travel(person, target.door, rides ? chair : null);
+    travel(person, target.door);
   } else {
-    moveChair(chair, { ...walkable(x, z, world, chair), facing: chair.facing });
-    settle(person);
+    moveVehicle(vehicle, { ...walkable(x, z, world, vehicle), facing: vehicle.facing });
   }
-  parkAt(name, chair, chair);
+  remember(vehicle);
 }
 
 canvas.addEventListener('mousedown', (e) => { if (e.button === 1) e.preventDefault(); });   // 中鍵不要變成瀏覽器的自動捲動
@@ -701,7 +752,10 @@ canvas.addEventListener('pointerdown', (e) => {
   try { canvas.setPointerCapture(e.pointerId); } catch { /* 抓不到指標也照樣能拖，只是拖出畫布會斷 */ }
   drag = { id: e.pointerId, person, startX: e.clientX, startY: e.clientY, moved: false, origin: { x: person.data.x, z: person.data.z, seat: person.data.seat } };
   const seat = seatOf(person);
-  if (seat && seat.mobile) Object.assign(drag, { chair: seat, chairOrigin: { x: seat.x, z: seat.z, facing: seat.facing }, turnFrom: { x: seat.x, z: seat.z } });   // 坐輪椅的人：連輪椅一起推
+  if (seat && seat.mobile) {   // 坐輪椅、坐屋裡的車的人：整台一起推
+    const { x, z, facing } = seat.vehicle;
+    Object.assign(drag, { chair: seat, chairOrigin: { x, z, facing }, turnFrom: { x, z } });
+  }
 });
 
 canvas.addEventListener('pointermove', (e) => {
@@ -729,19 +783,19 @@ canvas.addEventListener('pointermove', (e) => {
   const hit = groundAt(e.clientX, e.clientY);
   if (!hit) return;
   if (chair) {
-    // 輪椅只在地板上走，朝推的方向轉
-    const spot = walkable(hit.x, hit.z, world, chair);
+    // 輪椅和車子只在地板上走，朝推的方向轉；坐在上面的人跟著走
+    const vehicle = chair.vehicle;
+    const spot = walkable(hit.x, hit.z, world, vehicle);
     const dx = spot.x - drag.turnFrom.x, dz = spot.z - drag.turnFrom.z;
     const turned = Math.hypot(dx, dz) > 0.25;
     if (turned) drag.turnFrom = { x: spot.x, z: spot.z };
-    moveChair(chair, { ...spot, facing: turned ? Math.atan2(dx, dz) : chair.facing });
-    person.place(chair.x, chair.z, chair.facing);
+    moveVehicle(vehicle, { ...spot, facing: turned ? Math.atan2(dx, dz) : vehicle.facing });
     drag.at = { x: hit.x, z: hit.z };
     touchShadow();
   } else {
     person.place(hit.x, hit.z, Math.PI / 4);
   }
-  showMarkers(dropTarget(person, hit.x, hit.z));
+  showMarkers(dropTarget(person, hit.x, hit.z, chair && chair.vehicle));
 });
 
 function endDrag(e, cancelled) {
@@ -753,20 +807,21 @@ function endDrag(e, cancelled) {
   }
   if (!drag || e.pointerId !== drag.id) return;
   if (cancelled) { cancelDrag(); return; }
-  const { person, moved, chair, chairOrigin, at } = drag;
+  const { person, moved, chair, chairOrigin, at, origin } = drag;
   drag = null;
   showMarkers();
-  if (!moved) {   // 點一下：坐輪椅的人站起來，坐在桌邊的人再吃一盤，站在流理台前的人再做一次
+  if (!moved) {   // 點一下：坐輪椅、坐屋裡的車的人下來，坐在桌邊的人再吃一盤，站在流理台前的人再做一次
     if (chair) standUp(person, chair);
     else { tryEat(person); tryWork(person); }
     return;
   }
   delete person.data.facing;
   if (chair) {
-    if (at) parkChair(person, chair, chairOrigin, at.x, at.z);
+    if (at) parkVehicle(person, chair, chairOrigin, at.x, at.z);
     save();
     return;
   }
+  const leftSeat = origin.seat === null ? null : world.chairs[origin.seat];   // 被拖起來之前坐的位子
   const { x, z } = person.root.position;
   const target = dropTarget(person, x, z);
   if (target.chair) {
@@ -775,7 +830,9 @@ function endDrag(e, cancelled) {
     tryEat(person);
     tryWork(person);
   } else if (target.door) {
-    travel(person, target.door);
+    // 從街上的車被拖到停車塔門口：整台車連同車上其他人一起開進去
+    const car = leftSeat && leftSeat.vehicle;
+    travel(person, target.door, car || null, car ? car.seats.indexOf(leftSeat) : 0);
   } else {
     let spot = walkable(x, z);
     if (target.friend) {
@@ -857,8 +914,6 @@ function refocus() {
 }
 
 // ---------- 開場 ----------
-const saved = loadSave();
-Object.assign(parked, saved.parked);
 if ((saved.layout || 1) < STREET_LAYOUT) {   // 街道多了兩棟：站在街上的人跟著他旁邊的房子一起移
   for (const data of saved.people) if (data.place === 'street' && data.seat === null) data.x = movedStreetX(data.x);
 }

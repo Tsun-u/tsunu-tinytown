@@ -42,7 +42,7 @@
 // 開啟時先問伺服器現在是哪一版（version.txt，不走快取），再用版本號去拿樣式和每一個程式檔。
 // 瀏覽器會把檔案留一段時間，沒有版本號的話，更新後會拿到舊檔，或新舊混在一起。
 // src/ 新增檔案時要加進 MODULES；version.txt 由 commit 時的 hook 自動更新（見 README）。
-const MODULES = ['main', 'builder', 'creator', 'dentist', 'dept', 'design', 'home', 'hospital', 'kinder', 'person', 'pets', 'shop', 'sky', 'staff', 'street', 'toys'];
+const MODULES = ['main', 'builder', 'creator', 'dentist', 'dept', 'design', 'home', 'hospital', 'kinder', 'parking', 'person', 'pets', 'shop', 'sky', 'staff', 'street', 'toys'];
 (async () => {
   let version = '';
   try {

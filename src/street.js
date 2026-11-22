@@ -329,7 +329,14 @@ function furniture(b) {
 // 小車沿著馬路繞圈：靠鏡頭的車道往右開，街尾迴轉，靠人行道的車道往左開回來
 const LANE = { x0: LEFT + 1.6, x1: RIGHT - 1.6, near: 3.9, far: 2.9 };
 const TURN = (LANE.near - LANE.far) / 2, STRAIGHT = LANE.x1 - LANE.x0, LAP = 2 * STRAIGHT + 2 * Math.PI * TURN;
-const CAR_SPEED = 2.2, CAR_SEAT_HEIGHT = 0.68;
+const CAR_SPEED = 2.2;
+export const CAR_SEAT_HEIGHT = 0.68;
+// 四台車：粉紅色那台一開始在街上，其他三台停在停車塔的一、二、三樓。每台車有前座和後座（離車子中心多遠）。
+export const CAR_COLORS = [S.car, '#7db4ec', '#f8d15c', '#8fd6a0'];
+export const CAR_SEATS = [0.2, -0.45];
+const TOWER_DOOR_X = -4.0;   // 停車塔的車道口
+/** 從停車塔開出來的車，從車道口前面的車道開始開。 */
+export const laneStart = () => TOWER_DOOR_X - LANE.x0;
 
 /** 車子開了 s 這麼遠時在哪裡。 */
 function lanePoint(s) {
@@ -342,9 +349,9 @@ function lanePoint(s) {
 }
 
 /** 敞篷小車：獨立的網格，有人坐上去就會開。車頭朝 +x。 */
-function carModel(group) {
+export function carModel(group, hex) {
   const b = new Builder();
-  b.rbox(1.7, 0.42, 0.9, S.car, 0, 0.42, 0, { r: 0.12 });
+  b.rbox(1.7, 0.42, 0.9, hex, 0, 0.42, 0, { r: 0.12 });
   b.box(1.0, 0.03, 0.7, C.dark, -0.15, 0.64, 0);                           // 座艙
   b.rbox(0.14, 0.4, 0.74, C.cream, -0.72, 0.8, 0, { r: 0.05 });            // 後座椅背
   b.rbox(0.1, 0.34, 0.74, C.cream, -0.08, 0.78, 0, { r: 0.04 });           // 前座椅背
@@ -365,22 +372,28 @@ function carModel(group) {
   return car;
 }
 
-/** 每一格更新小車：車上有人就往前開；座位跟著車走。回傳車子這一格有沒有動。 */
-export function driveCar(place, dt) {
-  const { car, carSeats } = place;
-  const moving = carSeats.some((seat) => seat.occupant);
-  if (moving) car.userData.s += CAR_SPEED * dt;
-  const s = car.userData.s, [x, z] = lanePoint(s), [ax, az] = lanePoint(s + 0.05);
-  const heading = Math.atan2(-(az - z), ax - x);
-  car.position.set(x, moving ? Math.abs(Math.sin(s * 6)) * 0.015 : 0, z);
-  car.rotation.y = heading;
-  for (const seat of carSeats) {
-    seat.x = x + seat.along * Math.cos(heading);
-    seat.z = z - seat.along * Math.sin(heading);
-    seat.facing = heading + Math.PI / 2;
-    seat.marker.position.set(seat.x, 0.95, seat.z);
+/** 每一格更新街上的車：車上有人就往前開；座位跟著車走。不在街上的車（away，開進停車塔了）收起來。回傳這一格有沒有車在動。 */
+export function driveCars(place, dt) {
+  let anyMoving = false;
+  for (const car of place.vehicles) {
+    car.mesh.visible = !car.away;
+    for (const seat of car.seats) seat.away = car.away;
+    if (car.away) continue;
+    const moving = car.seats.some((seat) => seat.occupant);
+    if (moving) car.s += CAR_SPEED * dt;
+    anyMoving = anyMoving || moving;
+    const [x, z] = lanePoint(car.s), [ax, az] = lanePoint(car.s + 0.05);
+    const heading = Math.atan2(-(az - z), ax - x);
+    car.mesh.position.set(x, moving ? Math.abs(Math.sin(car.s * 6)) * 0.015 : 0, z);
+    car.mesh.rotation.y = heading;
+    for (const seat of car.seats) {
+      seat.x = x + seat.along * Math.cos(heading);
+      seat.z = z - seat.along * Math.sin(heading);
+      seat.facing = heading + Math.PI / 2;
+      seat.marker.position.set(seat.x, 0.95, seat.z);
+    }
   }
-  return moving;
+  return anyMoving;
 }
 
 export function buildStreet(scene) {
@@ -389,7 +402,7 @@ export function buildStreet(scene) {
   // 平移過的那幾棟：蓋的時候整棟移過去，門口的位置跟著移
   const moved = (dx, front) => { let door; b.at(dx, 0, 0, 0, () => { door = front(b); }); return { ...door, x: door.x + dx }; };
   const hospitalDoor = hospitalTower(b);
-  parkingTower(b);
+  const parkDoor = parkingTower(b);
   const deptDoor = moved(MID, deptTower);
   const shopDoor = moved(MID, shopFront);
   const dentistDoor = moved(MID, faceHouse);
@@ -399,17 +412,17 @@ export function buildStreet(scene) {
   const kinderDoor = moved(END, kinderFront);
   sky(b);
   furniture(b);
-  // 長椅的兩個位子，加上小車的前座和後座（位置每一格跟著車子更新）
+  // 長椅的兩個位子，加上每一台車的前座和後座（位置每一格跟著車子更新）。粉紅色那台排最前面，舊存檔記的座位編號才對得上
   const seats = [
     { x: BENCH_X - 0.4, z: 0.52, facing: 0, seatHeight: SEAT_HEIGHT }, { x: BENCH_X + 0.4, z: 0.52, facing: 0, seatHeight: SEAT_HEIGHT },
-    ...[0.2, -0.45].map((along) => ({ x: 0, z: 0, facing: 0, seatHeight: CAR_SEAT_HEIGHT, pose: 'drive', along })),
+    ...CAR_COLORS.flatMap((hex, car) => CAR_SEATS.map((along) => ({ x: 0, z: 0, facing: 0, seatHeight: CAR_SEAT_HEIGHT, pose: 'drive', along, car }))),
   ];
 
   const place = finishPlace(scene, b, seats, {
-    doors: [hospitalDoor, deptDoor, shopDoor, dentistDoor, homeDoor, toysDoor, petsDoor, kinderDoor],
+    doors: [hospitalDoor, parkDoor, deptDoor, shopDoor, dentistDoor, homeDoor, toysDoor, petsDoor, kinderDoor],
     spawn: { x: shopDoor.x, z: 1.6 },
     // 從屋裡出來的人站在那一棟的門外
-    arrive: { hospital: { x: hospitalDoor.x, z: 1.6 }, dept1: { x: deptDoor.x, z: 1.6 }, shop: { x: shopDoor.x, z: 1.6 }, home: { x: homeDoor.x, z: 1.6 }, toys: { x: toysDoor.x - 0.3, z: 1.7 }, pets: { x: petsDoor.x, z: 1.6 }, kinder: { x: kinderDoor.x, z: 1.6 }, dentist: { x: dentistDoor.x, z: 1.6 } },
+    arrive: { hospital: { x: hospitalDoor.x, z: 1.6 }, park1: { x: parkDoor.x, z: 1.7 }, dept1: { x: deptDoor.x, z: 1.6 }, shop: { x: shopDoor.x, z: 1.6 }, home: { x: homeDoor.x, z: 1.6 }, toys: { x: toysDoor.x - 0.3, z: 1.7 }, pets: { x: petsDoor.x, z: 1.6 }, kinder: { x: kinderDoor.x, z: 1.6 }, dentist: { x: dentistDoor.x, z: 1.6 } },
     view: { center: [CENTER, 2.4, 0.9], height: 17.5, width: LENGTH + 9.3 },
     shadow: { x: CENTER, half: LENGTH / 2 + 3.9 },   // 陰影要蓋得住整條街
     indoor: null,
@@ -423,9 +436,11 @@ export function buildStreet(scene) {
     // 小人能站的範圍：人行道和馬路
     areas: [{ minX: LEFT + 0.5, maxX: RIGHT - 0.7, minZ: 0.95, maxZ: 4.3 }],
   });
-  place.car = carModel(place.group);
-  place.car.userData.s = 2 * STRAIGHT + Math.PI * TURN - 0.9;   // 一開始停在左邊路旁，車頭朝左
-  place.carSeats = place.chairs.filter((chair) => chair.pose === 'drive');
-  driveCar(place, 0);
+  // 街上的車：s 是沿著車道開了多遠。粉紅色那台一開始停在左邊路旁、車頭朝左；其他三台在停車塔裡
+  place.vehicles = CAR_COLORS.map((hex, id) => ({
+    kind: 'car', id, street: true, mesh: carModel(place.group, hex), seats: place.chairs.filter((chair) => chair.car === id),
+    s: 2 * STRAIGHT + Math.PI * TURN - 0.9, away: id > 0,
+  }));
+  driveCars(place, 0);
   return place;
 }
