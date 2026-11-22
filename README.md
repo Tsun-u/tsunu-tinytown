@@ -14,6 +14,14 @@ python serve.py
 
 瀏覽器開 `http://127.0.0.1:8798/`。要讓同一個區網的平板試玩，改成 `python serve.py <這台電腦的區網 IP> 8798`。`serve.py` 只送遊戲本身的檔案（`index.html`、`styles.css`、`savebox.js`、`src/`、`vendor/`）。不用建置，three.js 放在 `vendor/`（0.187.0，MIT）。
 
+## 更新與版本號
+
+瀏覽器會把檔案留一段時間（GitHub Pages 是 10 分鐘），所以 `index.html` 開啟時先讀 `version.txt`（不走快取），再用裡面的版本號去拿樣式和 `src/` 的每個檔案，更新後才不會拿到舊檔或新舊混用。
+
+- `version.txt` 由 `.git/hooks/pre-commit` 在每次 commit 時自動換成當下的時間。hook 不進版控，重新 clone 後要補上：內容是 `date +%Y%m%d-%H%M%S > version.txt` 和 `git add version.txt` 兩行。
+- `src/` 新增檔案時，加進 `index.html` 的 `MODULES`。
+- `index.html`、`savebox.js`、`vendor/` 沒有版本號，改了以後最多 10 分鐘才生效。
+
 ## 怎麼玩
 
 - 拖小人：放到椅子上會坐下，放到另一個人旁邊會打招呼，放到地上就站在那裡。

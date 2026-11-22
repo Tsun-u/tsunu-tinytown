@@ -10,8 +10,7 @@
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
 <link rel="icon" type="image/png" sizes="512x512" href="icon-512.png">
 <title>小小世界</title>
-<link rel="stylesheet" href="styles.css">
-<script type="importmap">{ "imports": { "three": "./vendor/three.module.js", "three/addons/": "./vendor/addons/" } }</script>
+<link id="styles" rel="stylesheet" href="styles.css">
 </head>
 <body>
 <canvas id="stage"></canvas>
@@ -39,6 +38,30 @@
 </aside>
 
 <script src="savebox.js"></script>
-<script type="module" src="src/main.js"></script>
+<script>
+// 開啟時先問伺服器現在是哪一版（version.txt，不走快取），再用版本號去拿樣式和每一個程式檔。
+// 瀏覽器會把檔案留一段時間，沒有版本號的話，更新後會拿到舊檔，或新舊混在一起。
+// src/ 新增檔案時要加進 MODULES；version.txt 由 commit 時的 hook 自動更新（見 README）。
+const MODULES = ['main', 'builder', 'creator', 'dentist', 'dept', 'design', 'home', 'hospital', 'kinder', 'person', 'shop', 'sky', 'staff', 'street', 'toys'];
+(async () => {
+  let version = '';
+  try {
+    const answer = await fetch('version.txt', { cache: 'no-store' });
+    if (answer.ok) version = (await answer.text()).trim();
+  } catch { /* 問不到就用沒有版本號的網址，照樣能玩 */ }
+  const tag = /^[\w-]+$/.test(version) ? `?v=${version}` : '';
+  if (tag) document.getElementById('styles').href = `styles.css${tag}`;
+  const imports = { three: './vendor/three.module.js', 'three/addons/': './vendor/addons/' };
+  for (const name of MODULES) imports[new URL(`src/${name}.js`, location.href).href] = `./src/${name}.js${tag}`;
+  const map = document.createElement('script');
+  map.type = 'importmap';
+  map.textContent = JSON.stringify({ imports });
+  document.head.append(map);
+  const game = document.createElement('script');
+  game.type = 'module';
+  game.src = `src/main.js${tag}`;
+  document.body.append(game);
+})();
+</script>
 </body>
 </html>
