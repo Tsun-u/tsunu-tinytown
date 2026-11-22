@@ -1,4 +1,4 @@
-// 固定角色：醫生、護理師、店員、老師。跟玩家的小人一樣可以拖、可以坐、可以搭電梯，位置也會存檔；
+// 固定角色：醫生、護理師、店員、老師，還有寵物店的店狗。跟玩家的小人一樣可以拖、可以坐、可以搭電梯，位置也會存檔；
 // 差別是不會出現在造型面板裡（不能改造型、不能刪）。這張表是他們一開始站的位置和制服。
 const nurse = { skin: '#ffe0c4', hair: 'bun', hairColor: '#6b4226', top: '#f7a8c4', bottom: 'skirt', bottomColor: '#ffffff', extra: 'nurseCap', size: 'adult' };
 
@@ -14,5 +14,7 @@ export const STAFF = [
   { id: 'dentist', place: 'dentist', x: -0.4, z: -1.5, facing: Math.PI / 2, design: { skin: '#f6c9a0', hair: 'bob', hairColor: '#2f2622', top: '#ffffff', bottom: 'pants', bottomColor: '#8fd6c4', extra: 'glasses', size: 'adult' } },   // 診療椅的左邊，才不會擋住躺著的人
   { id: 'dentalNurse', place: 'dentist', x: -2.5, z: -2.4, facing: 0, design: { skin: '#ffe0c4', hair: 'pigtails', hairColor: '#8a5a2b', top: '#8fd6c4', bottom: 'skirt', bottomColor: '#ffffff', extra: 'none', apron: '#ffffff', size: 'adult' } },   // 櫃台後面
   { id: 'teacher', place: 'kinder', x: 0.6, z: -2.2, facing: Math.PI / 5, design: { skin: '#ffe0c4', hair: 'long', hairColor: '#6b4226', top: '#f29b4b', bottom: 'skirt', bottomColor: '#5b8def', extra: 'none', apron: '#f6d04d', size: 'adult' } },
+  { id: 'shopDog', place: 'pets', x: -0.9, z: 0.2, facing: Math.PI / 4, design: { size: 'dog', fur: '#ffffff', ears: 'floppy', patch: 'eye', top: '#e2574c' } },   // 寵物店的店狗
+  { id: 'petClerk', place: 'pets', x: -2.6, z: -1.5, facing: Math.PI / 6, design: { skin: '#f6c9a0', hair: 'bun', hairColor: '#8a5a2b', top: '#f6a35a', bottom: 'pants', bottomColor: '#5a5560', extra: 'none', apron: '#8fd0c8', size: 'adult' } },   // 櫃台前面
   { id: 'yardTeacher', place: 'kinder', x: 0.9, z: 4.0, facing: Math.PI / 4, design: { skin: '#f6c9a0', hair: 'short', hairColor: '#2f2622', top: '#6fbf73', bottom: 'pants', bottomColor: '#5a5560', extra: 'hat', apron: '#ffffff', size: 'adult' } },
 ];

@@ -1,8 +1,9 @@
 import * as THREE from 'three';
 import { buildShop } from './shop.js';
 import { buildHome } from './home.js';
-import { buildStreet, driveCar } from './street.js';
+import { buildStreet, driveCar, STREET_LAYOUT, movedStreetX } from './street.js';
 import { buildToys } from './toys.js';
+import { buildPets } from './pets.js';
 import { buildHospital, buildHospital2, setLiftOpen } from './hospital.js';
 import { buildDept0, buildDept1, buildDept2, buildDept3, moveEscalators, setCurtain } from './dept.js';
 import { buildKinder, SWING } from './kinder.js';
@@ -27,6 +28,7 @@ function loadSave() {
   return { people: DEFAULT_PEOPLE };
 }
 
+// 預設的兩個人站在點心店門口。位置是街道第一版的座標，跟舊存檔一樣在開頁時換算成現在的版面（見 STREET_LAYOUT）。
 const DEFAULT_PEOPLE = [
     { id: 1, place: 'street', x: -2.2, z: 1.9, seat: null, design: { skin: '#f6c9a0', hair: 'short', hairColor: '#2f2622', top: '#5b8def', bottom: 'pants', bottomColor: '#5a5560', extra: 'glasses', size: 'adult' } },
     { id: 2, place: 'street', x: -1.4, z: 2.1, seat: null, design: { skin: '#ffe0c4', hair: 'pigtails', hairColor: '#6b4226', top: '#f29bc0', bottom: 'skirt', bottomColor: '#e2574c', extra: 'none', size: 'child' } },
@@ -36,7 +38,7 @@ const parked = {};   // 被推走的輪椅停在哪裡：「地方:第幾個座�
 
 function save() {
   touchShadow(2);   // 存檔代表有人動過或換過造型
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ people: people.map((p) => p.data), place: placeName, sky: { time: sky.time, weather: sky.weather }, parked })); } catch { /* 存不了照樣能玩 */ }
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ people: people.map((p) => p.data), place: placeName, sky: { time: sky.time, weather: sky.weather }, parked, layout: STREET_LAYOUT })); } catch { /* 存不了照樣能玩 */ }
 }
 
 // ---------- 場景 ----------
@@ -53,7 +55,7 @@ sun.position.set(7, 12, 5);
 sun.target.position.set(0, 0, 1);
 sun.castShadow = SHADOWS;
 sun.shadow.mapSize.set(1024, 1024);
-Object.assign(sun.shadow.camera, { left: -13, right: 15, top: 11, bottom: -11, near: 1, far: 44 });   // 要蓋得住最寬的街道
+Object.assign(sun.shadow.camera, { left: -14, right: 14, top: 11, bottom: -11, near: 1, far: 48 });   // 左右的範圍每個地方不一樣，由 Sky 在換地方時設
 sun.shadow.bias = -0.0008;
 sun.shadow.normalBias = 0.03;
 sun.shadow.autoUpdate = false;   // 陰影只在有人移動或換造型時重算（見 frame），閒置時不用每格重畫一次整間店
@@ -71,7 +73,7 @@ const sky = new Sky(scene, hemi, sun);
 const builders = {
   street: buildStreet, hospital: buildHospital, hospital2: buildHospital2,
   dept0: buildDept0, dept1: buildDept1, dept2: buildDept2, dept3: buildDept3,
-  shop: buildShop, dentist: buildDentist, home: buildHome, toys: buildToys, kinder: buildKinder,
+  shop: buildShop, dentist: buildDentist, home: buildHome, toys: buildToys, pets: buildPets, kinder: buildKinder,
 };
 const places = {};   // 已經蓋好的地方
 const people = [];   // 玩家的小人和固定角色（data.npc）都在這裡
@@ -107,6 +109,7 @@ const seatOf = (person) => (person.data.seat === null ? null : placeOf(person).c
 let placeName = 'street';
 let world = placeNamed('street');
 world.group.visible = true;
+sky.enter(world);
 const placeOf = (person) => placeNamed(person.data.place);
 const here = () => people.filter((p) => p.data.place === placeName);
 
@@ -414,7 +417,8 @@ const DEPT_ICON = '<path d="M8 8h28v36H8z" fill="#c9b6e4"/><path d="M6 5h32v5H6z
 ['B', 1, 2, 3].forEach((floor, i) => { PLACE_ICONS['dept' + i] = floorIcon(DEPT_ICON, floor); });
 PLACE_ICONS.kinder = '<svg viewBox="0 0 48 48"><path d="M8 22h32v20H8z" fill="#fff6e8"/><path d="M5 22 24 8l19 14z" fill="#f8d15c"/><path d="M8 34h32v8H8z" fill="#b9e3a8"/><path d="M20 30h8v12h-8z" fill="#f5a25a"/><circle cx="24" cy="17" r="3" fill="#e86a5c"/><path d="M11 26h6v6h-6zM31 26h6v6h-6z" fill="#c9ecf5"/></svg>';
 PLACE_ICONS.dentist = '<svg viewBox="0 0 48 48"><path d="M8 14h32v28H8z" fill="#f8d98a"/><path d="M5 9h38v7H5z" fill="#e8766a"/><path d="M17 20c-4 0-6 3-5 8 1 6 2 12 5 12 2 0 2-6 7-6s5 6 7 6c3 0 4-6 5-12 1-5-1-8-5-8-3 0-4 1.500-7 1.500S20 20 17 20z" fill="#fff"/></svg>';
-const PLACE_LABELS = { kinder: '幼稚園', dentist: '牙醫診所', street: '街上', hospital: '醫院一樓', hospital2: '醫院二樓', dept0: '百貨地下室超市', dept1: '百貨一樓服飾店', dept2: '百貨二樓遊戲區和書店', dept3: '百貨三樓美食街', shop: '點心店', home: '家', toys: '玩具店' };
+PLACE_ICONS.pets = '<svg viewBox="0 0 48 48"><path d="M8 16h32v26H8z" fill="#bfe6df"/><path d="M5 11h38v7H5z" fill="#f6a35a"/><ellipse cx="24" cy="33" rx="7" ry="6" fill="#a86b3c"/><circle cx="14.500" cy="27" r="3.200" fill="#a86b3c"/><circle cx="20.500" cy="22.500" r="3.200" fill="#a86b3c"/><circle cx="27.500" cy="22.500" r="3.200" fill="#a86b3c"/><circle cx="33.500" cy="27" r="3.200" fill="#a86b3c"/></svg>';
+const PLACE_LABELS = { pets: '寵物店', kinder: '幼稚園', dentist: '牙醫診所', street: '街上', hospital: '醫院一樓', hospital2: '醫院二樓', dept0: '百貨地下室超市', dept1: '百貨一樓服飾店', dept2: '百貨二樓遊戲區和書店', dept3: '百貨三樓美食街', shop: '點心店', home: '家', toys: '玩具店' };
 const mapButton = document.getElementById('mapBtn');
 const mapMenu = document.getElementById('mapMenu');
 
@@ -565,7 +569,9 @@ function personAt(clientX, clientY) {
 function dropTarget(person, x, z) {
   let chair = null, chairDistance = 1.0;
   world.chairs.forEach((c) => {
-    const d = Math.hypot(c.x - x, c.z - z);
+    // 座位比較高時，圈圈畫在座位上；手指對準圈圈放手，地板上的落點會偏向鏡頭反方向，所以兩個位置都算
+    const slide = c.marker.position.y / CAMERA_DIR.y;
+    const d = Math.min(Math.hypot(c.x - x, c.z - z), Math.hypot(c.x - CAMERA_DIR.x * slide - x, c.z - CAMERA_DIR.z * slide - z));
     if (!c.occupant && !c.away && d < chairDistance) { chair = c; chairDistance = d; }
   });
   if (chair) return { chair };
@@ -853,6 +859,9 @@ function refocus() {
 // ---------- 開場 ----------
 const saved = loadSave();
 Object.assign(parked, saved.parked);
+if ((saved.layout || 1) < STREET_LAYOUT) {   // 街道多了兩棟：站在街上的人跟著他旁邊的房子一起移
+  for (const data of saved.people) if (data.place === 'street' && data.seat === null) data.x = movedStreetX(data.x);
+}
 saved.people.filter((data) => !data.npc).forEach(addPerson);
 // 固定角色：存檔裡有就照存檔的位置，沒有（新加的角色、第一次玩）就站在表上的位置；制服一律照表
 for (const staff of STAFF) {

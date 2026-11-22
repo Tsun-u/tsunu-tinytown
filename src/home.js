@@ -304,7 +304,7 @@ function yard(b) {
 }
 
 /** 泳池裡濺起來的水花：幾顆小水珠，有人在玩水時才跳。 */
-function splashDrops(group, x, z) {
+export function splashDrops(group, x, z) {
   const drops = new THREE.Group();
   drops.position.set(x, 0.3, z);
   const material = new THREE.MeshBasicMaterial({ color: '#e4f7fd' });
