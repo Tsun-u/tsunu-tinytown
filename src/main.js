@@ -10,6 +10,7 @@ import { buildDept0, buildDept1, buildDept2, buildDept3, moveEscalators, setCurt
 import { buildKinder, SWING } from './kinder.js';
 import { buildDentist, twinkle } from './dentist.js';
 import { STAFF } from './staff.js';
+import { ITEMS, itemMesh } from './items.js';
 import { Sky, TIME_NAMES, WEATHER_NAMES } from './sky.js';
 import { Person } from './person.js';
 import { randomDesign, drawAvatar, MAX_PEOPLE, CLOTH_COLORS } from './design.js';
@@ -40,7 +41,9 @@ const parked = { ...saved.parked };   // 輪椅和車子停在哪裡。屋裡的
 
 function save() {
   touchShadow(2);   // 存檔代表有人動過或換過造型
-  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ people: people.map((p) => p.data), place: placeName, sky: { time: sky.time, weather: sky.weather }, parked, layout: STREET_LAYOUT })); } catch { /* 存不了照樣能玩 */ }
+  // 小東西：被誰拿著，或放在哪個地方的哪個位置
+  const things = Object.fromEntries(items.map((item) => [item.def.id, item.holder ? { holder: item.holder.data.id } : { place: item.place, x: item.x, y: item.y, z: item.z }]));
+  try { localStorage.setItem(SAVE_KEY, JSON.stringify({ people: people.map((p) => p.data), place: placeName, sky: { time: sky.time, weather: sky.weather }, parked, layout: STREET_LAYOUT, items: things })); } catch { /* 存不了照樣能玩 */ }
 }
 
 // ---------- 場景 ----------
@@ -264,7 +267,7 @@ function serveFood(place) {
 function updateEffects(dt, time) {
   if (world.lift) {   // 電梯門：有人被拖到電梯附近、或剛有人搭到這一層時打開
     const lift = world.lift;
-    const near = !!drag && drag.moved && Math.hypot(drag.person.root.position.x - lift.x, drag.person.root.position.z - lift.z) < 1.6;
+    const near = !!drag && drag.moved && !!drag.person && Math.hypot(drag.person.root.position.x - lift.x, drag.person.root.position.z - lift.z) < 1.6;
     const goal = near || time < lift.holdUntil ? 1 : 0;
     if (Math.abs(goal - lift.open) > 0.002) { setLiftOpen(lift, lift.open + (goal - lift.open) * (1 - Math.exp(-dt * 10))); touchShadow(); }
   }
@@ -487,6 +490,7 @@ function goTo(name) {
   world.group.visible = true;
   sky.enter(world);
   for (const person of people) person.root.visible = person.data.place === name;
+  for (const item of items) if (!item.holder) item.root.visible = item.place === name;
   renderMap();
   look.zoom = 1; look.pan.set(0, 0, 0);
   if (selected && selected.data.place !== name) { const first = here().find((p) => !p.data.npc); if (first) select(first); }
@@ -513,7 +517,12 @@ function travel(person, door, vehicle = null, seatIndex = 0) {
     if (vehicle.street) vehicle.away = true;
     else moveVehicle(vehicle, { x: vehicle.x, z: vehicle.z, facing: vehicle.facing, away: true });
     // 那邊擺出來：街上的車從停車塔的車道口開始開，屋裡的停在門口附近
-    if (twin.street) { Object.assign(twin, { away: false, s: laneStart() }); driveCars(destination, 0); }
+    if (twin.street) {
+      let s = laneStart();   // 車道口已經停著別台車的話，往前排
+      while (destination.vehicles.some((car) => car !== twin && !car.away && Math.abs(car.s - s) < 2.2)) s += 2.2;
+      Object.assign(twin, { away: false, s });
+      driveCars(destination, 0);
+    }
     else moveVehicle(twin, { x: spot.x, z: spot.z, facing: 0 });
     remember(vehicle);
     remember(twin);
@@ -597,7 +606,7 @@ function groundAt(clientX, clientY) {
   return raycaster.ray.intersectPlane(ground, hit) ? hit : null;
 }
 
-/** 手指附近最近的小人。可點的範圍比模型大，小朋友的手指點得到。 */
+/** 手指附近最近的小人和離多遠（畫面上的距離）。可點的範圍比模型大，小朋友的手指點得到。 */
 function personAt(clientX, clientY) {
   const pxPerUnit = window.innerHeight / viewHeight * view.zoom;
   let best = null;
@@ -608,7 +617,7 @@ function personAt(clientX, clientY) {
     const distance = Math.hypot(middle.x - clientX, middle.y - clientY);
     if (distance < reach && (!best || distance < best.distance)) best = { person, distance };
   }
-  return best && best.person;
+  return best;
 }
 
 /** 放手的位置會碰到什麼：空位、門口、另一個人，或地板。 */
@@ -616,9 +625,10 @@ function dropTarget(person, x, z, riding = null) {
   let chair = null, chairDistance = 1.0;
   world.chairs.forEach((c) => {
     if (riding && c.vehicle === riding) return;   // 正在推的那一台自己的位子不算
-    // 座位比較高時，圈圈畫在座位上；手指對準圈圈放手，地板上的落點會偏向鏡頭反方向，所以兩個位置都算
+    // 座位比較高時，圈圈畫在座位上；手指對準圈圈放手，地板上的落點會偏向鏡頭反方向，所以那個位置也算。
+    // 那個位置只收對得很準的（半徑 0.5），不然停在路邊的車會把旁邊人行道上的人吸上車
     const slide = c.marker.position.y / CAMERA_DIR.y;
-    const d = Math.min(Math.hypot(c.x - x, c.z - z), Math.hypot(c.x - CAMERA_DIR.x * slide - x, c.z - CAMERA_DIR.z * slide - z));
+    const d = Math.min(Math.hypot(c.x - x, c.z - z), Math.hypot(c.x - CAMERA_DIR.x * slide - x, c.z - CAMERA_DIR.z * slide - z) + 0.5);
     if (!c.occupant && !c.away && d < chairDistance) { chair = c; chairDistance = d; }
   });
   const door = world.doors.find((d) => Math.hypot(d.x - x, d.z - z) < (d.r ? d.r + 0.1 : 0.85));   // 圈比較小的門口（電梯、手扶梯），判定範圍跟著縮小
@@ -683,10 +693,11 @@ canvas.addEventListener('wheel', (e) => {
 
 function cancelDrag() {
   if (!drag) return;
-  const { person, origin, moved, chair, chairOrigin } = drag;
+  const { person, origin, moved, chair, chairOrigin, item } = drag;
   drag = null;
   showMarkers();
   if (!moved) return;
+  if (item) { restoreItem(item, origin); return; }
   if (chair) moveVehicle(chair.vehicle, chairOrigin);
   Object.assign(person.data, origin);
   settle(person);
@@ -744,7 +755,14 @@ canvas.addEventListener('pointerdown', (e) => {
     return;
   }
   if (orbit || drag || e.button !== 0) return;
-  const person = personAt(e.clientX, e.clientY);
+  const nearPerson = personAt(e.clientX, e.clientY), nearItem = creator.open ? null : itemAt(e.clientX, e.clientY);
+  if (nearItem && (!nearPerson || nearItem.distance < nearPerson.distance)) {   // 手指比較靠近一樣小東西：拖的是東西
+    const { item } = nearItem;
+    try { canvas.setPointerCapture(e.pointerId); } catch { /* 抓不到指標也照樣能拖 */ }
+    drag = { id: e.pointerId, item, startX: e.clientX, startY: e.clientY, moved: false, origin: { place: item.place, x: item.x, y: item.y, z: item.z, holder: item.holder } };
+    return;
+  }
+  const person = nearPerson && nearPerson.person;
   if (!person) return;
   select(person);
   person.hop = 0.35;
@@ -772,6 +790,21 @@ canvas.addEventListener('pointermove', (e) => {
   }
   if (!drag || e.pointerId !== drag.id) return;
   if (!drag.moved && Math.hypot(e.clientX - drag.startX, e.clientY - drag.startY) < 10) return;
+  if (drag.item) {   // 拖小東西：離開原本的地方或拿著的人，跟著手指浮在半空
+    const { item } = drag;
+    const hit = groundAt(e.clientX, e.clientY);
+    if (!hit) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      if (item.holder) { item.holder.release(); item.holder = null; }
+      scene.add(item.root);
+      item.root.visible = true;
+    }
+    item.root.position.set(hit.x, 0.5, hit.z);
+    drag.at = { x: hit.x, z: hit.z };
+    touchShadow();
+    return;
+  }
   const { person, chair } = drag;
   if (!drag.moved) {
     drag.moved = true;
@@ -807,11 +840,16 @@ function endDrag(e, cancelled) {
   }
   if (!drag || e.pointerId !== drag.id) return;
   if (cancelled) { cancelDrag(); return; }
-  const { person, moved, chair, chairOrigin, at, origin } = drag;
+  const { person, moved, chair, chairOrigin, at, origin, item } = drag;
   drag = null;
   showMarkers();
-  if (!moved) {   // 點一下：坐輪椅、坐屋裡的車的人下來，坐在桌邊的人再吃一盤，站在流理台前的人再做一次
+  if (item) {
+    if (moved) { if (at) dropItem(item, at.x, at.z); else restoreItem(item, origin); save(); }
+    return;
+  }
+  if (!moved) {   // 點一下：坐輪椅、坐屋裡的車的人下來；拿著東西的人把東西放下；坐在桌邊的人再吃一盤，站在流理台前的人再做一次
     if (chair) standUp(person, chair);
+    else if (itemHeldBy(person)) { putDown(person); save(); }
     else { tryEat(person); tryWork(person); }
     return;
   }
@@ -842,6 +880,8 @@ function endDrag(e, cancelled) {
       spot = walkable(fp.x + side * 0.6, fp.z - side * 0.6);
       if (friend.mode === 'stand') friend.root.rotation.y = Math.atan2(spot.x - fp.x, spot.z - fp.z);
       person.greet = friend.greet = 1.6;
+      const gift = itemHeldBy(person);   // 手上有東西、朋友空著手：打招呼時順便遞給他
+      if (gift && !itemHeldBy(friend)) giveItem(gift, friend);
       person.root.rotation.y = Math.atan2(fp.x - spot.x, fp.z - spot.z);
       person.data.x = spot.x; person.data.z = spot.z;
       person.root.position.set(spot.x, 0, spot.z);
@@ -855,6 +895,88 @@ function endDrag(e, cancelled) {
 }
 canvas.addEventListener('pointerup', (e) => endDrag(e, false));
 canvas.addEventListener('pointercancel', (e) => endDrag(e, true));
+
+// ---------- 小物品 ----------
+// 可以拿的小東西（名單在 items.js）。每一樣不是放在某個地方的某個位置，就是被某個人拿著（holder）。
+const items = ITEMS.map((def) => {
+  const root = new THREE.Group();
+  root.add(itemMesh(def));
+  return { def, root, place: def.place, x: def.x, y: def.y, z: def.z, holder: null };
+});
+const itemHeldBy = (person) => items.find((item) => item.holder === person);
+
+/** 把東西放在某個地方的某個位置（y 是桌面高度，地上是 0）。 */
+function layItem(item, place, x, y, z) {
+  if (item.holder) { item.holder.release(); }
+  Object.assign(item, { place, x, y, z, holder: null });
+  scene.add(item.root);
+  item.root.position.set(x, y, z);
+  item.root.visible = place === placeName;
+}
+const layHome = (item) => layItem(item, item.def.place, item.def.x, item.def.y, item.def.z);
+
+/** 把東西交給一個人拿。他手上原本有東西的話，那一樣放到腳邊。 */
+function giveItem(item, person) {
+  const had = itemHeldBy(person);
+  if (had && had !== item) putDown(person);
+  if (item.holder && item.holder !== person) item.holder.release();
+  item.holder = person;
+  person.carry(item.root);
+}
+
+/** 把手上的東西放到腳邊的地上。 */
+function putDown(person) {
+  const item = itemHeldBy(person);
+  if (!item) return;
+  const spot = walkable(person.root.position.x + 0.55, person.root.position.z + 0.35, placeOf(person));
+  layItem(item, person.data.place, spot.x, 0, spot.z);
+}
+
+/** 手指附近最近的小東西：地上、桌上的，和這裡的人手上拿的。 */
+function itemAt(clientX, clientY) {
+  let best = null;
+  const where = new THREE.Vector3();
+  for (const item of items) {
+    if (item.holder ? item.holder.data.place !== placeName : item.place !== placeName) continue;
+    if (item.holder) item.root.getWorldPosition(where); else where.set(item.x, item.y, item.z);
+    const at = screenOf(where.x, where.y + 0.15, where.z);
+    const distance = Math.hypot(at.x - clientX, at.y - clientY);
+    if (distance < 46 && (!best || distance < best.distance)) best = { item, distance };
+  }
+  return best;
+}
+
+/** 放手的地方附近有沒有空的桌面（每樣東西一開始放的位置）。桌面比地板高，所以對準桌面放手時地板上的落點也算。 */
+function surfaceNear(x, z, except) {
+  let best = null;
+  for (const { place, x: sx, y: sy, z: sz } of ITEMS) {
+    if (place !== placeName || sy === 0) continue;
+    if (items.some((item) => item !== except && !item.holder && item.place === placeName && Math.hypot(item.x - sx, item.z - sz) < 0.15)) continue;
+    const slide = sy / CAMERA_DIR.y;
+    const distance = Math.min(Math.hypot(sx - x, sz - z), Math.hypot(sx - CAMERA_DIR.x * slide - x, sz - CAMERA_DIR.z * slide - z));
+    if (distance < 0.6 && (!best || distance < best.distance)) best = { x: sx, y: sy, z: sz, distance };
+  }
+  return best;
+}
+
+/** 拖著東西放手：放到人身上他就拿著，放到桌面就擺在桌上，其他地方就放地上。 */
+function dropItem(item, x, z) {
+  let receiver = null, nearest = 0.9;
+  for (const person of here()) {
+    const d = Math.hypot(person.root.position.x - x, person.root.position.z - z);
+    if (d < nearest) { receiver = person; nearest = d; }
+  }
+  const surface = receiver ? null : surfaceNear(x, z, item);
+  if (receiver) { giveItem(item, receiver); receiver.hop = 0.35; }
+  else if (surface) layItem(item, placeName, surface.x, surface.y, surface.z);
+  else { const spot = walkable(x, z); layItem(item, placeName, spot.x, 0, spot.z); }
+}
+
+/** 照拖起來之前的樣子放回去。 */
+function restoreItem(item, origin) {
+  if (origin.holder) giveItem(item, origin.holder);
+  else layItem(item, origin.place, origin.x, origin.y, origin.z);
+}
 
 // ---------- 造型面板 ----------
 const creator = new Creator({
@@ -877,6 +999,8 @@ const creator = new Creator({
   onRemove(person) {
     if (players().length <= 1) return;
     leaveSeat(person);
+    const held = itemHeldBy(person);
+    if (held) layHome(held);   // 被刪掉的人手上的東西回到原本的位置
     scene.remove(person.root);
     people.splice(people.indexOf(person), 1);
     select(here().find((p) => !p.data.npc) || players()[0]);
@@ -923,6 +1047,14 @@ for (const staff of STAFF) {
   const kept = saved.people.find((data) => data.npc && data.id === staff.id);
   const spot = kept ? { place: kept.place, x: kept.x, z: kept.z, seat: kept.seat, facing: kept.facing } : { place: staff.place, x: staff.x, z: staff.z, seat: null, facing: staff.facing };
   addPerson({ id: staff.id, npc: true, design: { ...staff.design }, ...spot });
+}
+// 小東西：存檔裡有就照存檔（被誰拿著，或放在哪裡），沒有就放在表上的位置
+for (const item of items) {
+  const kept = (saved.items || {})[item.def.id];
+  const holder = kept && kept.holder !== undefined ? people.find((p) => p.data.id === kept.holder) : null;
+  if (holder && !itemHeldBy(holder)) giveItem(item, holder);
+  else if (kept && builders[kept.place]) layItem(item, kept.place, kept.x, kept.y, kept.z);
+  else layHome(item);
 }
 applyCamera();
 window.addEventListener('resize', resize);

@@ -48,7 +48,24 @@ export class Person {
     this.working = 0;                 // 在爐子、水槽、冰箱前做事剩下的秒數
     this.treat = 0;                   // 拿著冰棒吃剩下的秒數
     this.phase = Math.random() * 6;
+    this.carried = null;              // 拿著的東西（一個模型）；人舉在左手上，狗狗叼在嘴裡
     this.rebuild();
+  }
+
+  /** 拿起一樣東西。 */
+  carry(object) {
+    this.carried = object;
+    object.position.set(0, 0, 0);
+    object.rotation.set(0, 0, 0);
+    this.carryPoint.add(object);
+  }
+
+  /** 放開手上的東西，回傳它。 */
+  release() {
+    const object = this.carried;
+    this.carried = null;
+    if (object) { this.carryPoint.remove(object); object.visible = true; }
+    return object;
   }
 
   get isDog() { return this.data.design.size === 'dog'; }
@@ -116,6 +133,11 @@ export class Person {
     this.mouth.add(this.buildPopsicle());
     this.popsicle.rotation.x = -Math.PI / 2;
     this.head.add(this.mouth);
+    // 叼著的東西放在嘴巴前面一點、縮小一些
+    this.carryPoint = new THREE.Group();
+    this.carryPoint.position.set(0, -0.06, 0.1);
+    this.carryPoint.scale.setScalar(0.8);
+    this.mouth.add(this.carryPoint);
   }
 
   rebuild() {
@@ -125,6 +147,7 @@ export class Person {
     if (this.isDog) {
       this.buildDog(d);
       if (this.castShadow) this.body.traverse((node) => { if (node.isMesh) node.castShadow = true; });
+      if (this.carried) this.carryPoint.add(this.carried);   // 換造型時整個身體重建，手上的東西要接回去
       return;
     }
 
@@ -157,6 +180,10 @@ export class Person {
     // 冰棒握在右手，棒子朝下、冰的那頭朝手臂外
     this.arms[1].add(this.buildPopsicle());
     this.popsicle.position.set(0, -0.42, 0.06);
+    // 拿著的東西在左手：右手要吃東西、做事、揮手。拿著時左手舉高，東西才不會被身體擋住
+    this.carryPoint = new THREE.Group();
+    this.carryPoint.position.set(0, -0.46, 0);
+    this.arms[0].add(this.carryPoint);
 
     this.head = new THREE.Group();
     this.head.position.y = HEAD_Y;
@@ -174,6 +201,7 @@ export class Person {
     this.buildHair(d);
     this.buildExtra(d);
     if (this.castShadow) this.body.traverse((node) => { if (node.isMesh) node.castShadow = true; });
+    if (this.carried) this.carryPoint.add(this.carried);
   }
 
   buildHair(d) {
@@ -280,6 +308,7 @@ export class Person {
     this.head.rotation.x = (this.mode === 'sleep' ? 0.45 : 0) + 0.3 * nod;   // 睡覺時頭垂下來；吃東西、做事時點頭
     this.head.rotation.z = busy ? 0 : Math.sin(t * 0.9) * 0.08;
     this.popsicle.visible = this.treat > 0;
+    if (this.carried) this.carried.visible = this.treat <= 0;   // 嘴巴只有一張：吃冰棒時先看不到叼著的東西
     this.shadow.scale.setScalar(this.mode === 'held' ? 0.55 : 0.8);
     this.shadow.visible = !this.castShadow && (this.mode === 'stand' || this.mode === 'work');
   }
@@ -318,6 +347,8 @@ export class Person {
       armLift = [0, 2.5 + Math.sin(this.greet * 14) * 0.35];
     }
     if (this.hop > 0 && this.mode !== 'held') lift += Math.sin((this.hop / 0.35) * Math.PI) * 0.18;
+    if (this.carried) armLift[0] = 2.5;   // 左手把東西舉高
+    this.carryPoint.rotation.z = 0.18 + armLift[0];   // 手臂怎麼轉，東西就反著轉回來，保持正的
 
     const lying = this.mode === 'sleep';
     this.body.rotation.x = lying ? -Math.PI / 2 : 0;
