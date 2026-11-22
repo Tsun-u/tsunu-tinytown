@@ -120,7 +120,8 @@ function buildFloor(scene, level) {
     b.rbox(0.6, 0.08, 0.6, C.white, 2.2, 1.2, 2.75, { r: 0.03 });
     b.box(0.14, 0.7, 0.14, C.dark, 1.7, 0.42, 2.9);
     for (let i = 0; i < 5; i++) b.box(0.3, 0.07, 0.07, i % 2 ? C.white : C.red, 1.6 - i * 0.2, 0.9 + i * 0.2, 2.9, { rz: -0.78 });
-    doors.push({ x: 0, z: 3.5, to: 'street' });
+    // 整條黃黑線都是出口：拖過樓板前緣就算，不用對準中間的圈
+    doors.push({ x: 0, z: 3.5, to: 'street', gate: { minX: -2.0, maxX: 2.0, minZ: 2.5 } });
     arrive.street = { x: 0, z: 1.6 };
   }
 

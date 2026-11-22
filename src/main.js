@@ -633,9 +633,11 @@ function dropTarget(person, x, z, riding = null) {
     const d = Math.min(Math.hypot(c.x - x, c.z - z), Math.hypot(c.x - CAMERA_DIR.x * slide - x, c.z - CAMERA_DIR.z * slide - z) + 0.5);
     if (!c.occupant && !c.away && d < chairDistance) { chair = c; chairDistance = d; }
   });
-  const door = world.doors.find((d) => Math.hypot(d.x - x, d.z - z) < (d.r ? d.r + 0.1 : 0.85));   // 圈比較小的門口（電梯、手扶梯），判定範圍跟著縮小
+  // 圈比較小的門口（電梯、手扶梯），判定範圍跟著縮小；很寬的出口（gate）是一整塊範圍，放在裡面就算
+  const inGate = (d) => d.gate && x > d.gate.minX && x < d.gate.maxX && z > d.gate.minZ;
+  const door = world.doors.find((d) => inGate(d) || Math.hypot(d.x - x, d.z - z) < (d.r ? d.r + 0.1 : 0.85));
   // 門口旁邊剛好有空位時（例如停在坡道口的車），看放手的地方離哪一個近
-  if (door && (!chair || Math.hypot(door.x - x, door.z - z) < chairDistance)) return { door };
+  if (door && (!chair || inGate(door) || Math.hypot(door.x - x, door.z - z) < chairDistance)) return { door };
   if (chair) return { chair };
   let friend = null, friendDistance = 0.95;
   for (const other of here()) {
